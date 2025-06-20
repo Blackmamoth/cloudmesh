@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U cloudmesh" ]
+      interval: 1m
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - cloudmesh_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    env_file:
+      - .env
+    command: "--requirepass ${REDIS_PASS}"
+    ports:
+      - 6379:6379
+
+volumes:
+  cloudmesh_pg:
