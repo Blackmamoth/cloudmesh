@@ -7,6 +7,7 @@ import (
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
+	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -18,6 +19,11 @@ type APIServer struct {
 	host     string
 	addr     string
 	connPool *pgxpool.Pool
+}
+
+func init() {
+	clerk.SetKey(config.ClerkConfig.SECRET_KEY)
+	config.LOGGER.Info("Clerk secret key set")
 }
 
 func NewAPIServer(host, addr string, connPool *pgxpool.Pool) *APIServer {

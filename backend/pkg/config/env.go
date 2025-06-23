@@ -29,6 +29,10 @@ type PostgresConfiguration struct {
 	CONNECTION_TIMEOUT       int64  `envconfig:"POSTGRES_CONNECTION_TIMEOUT"       required:"true"`
 }
 
+type ClerkConfiguration struct {
+	SECRET_KEY string `envconfig:"CLERK_SECRET_KEY" required:"true"`
+}
+
 type RedisConfiguration struct {
 	PASS string `envconfig:"REDIS_PASS" required:"true"`
 	HOST string `envconfig:"REDIS_HOST" required:"true"`
@@ -40,6 +44,7 @@ var (
 	APIConfig      APIConfiguration
 	PostgresConfig PostgresConfiguration
 	RedisConfig    RedisConfiguration
+	ClerkConfig    ClerkConfiguration
 )
 
 func init() {
@@ -58,6 +63,10 @@ func loadEnv() {
 	}
 
 	if err := envconfig.Process("REDIS_", &RedisConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
+	if err := envconfig.Process("CLERK_", &ClerkConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
 }
