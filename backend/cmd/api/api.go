@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/handlers"
+	"github.com/blackmamoth/cloudmesh/pkg/providers"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
@@ -46,7 +48,7 @@ func (s *APIServer) Run() error {
 	r.Use(middleware.Compress(6, "gzip", "brotli"))
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{config.APIConfig.FRONTEND_HOST},
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "HEAD"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -59,6 +61,8 @@ func (s *APIServer) Run() error {
 			"message": "Welcome to CloudMesh! Your gateway to effortlessly connecting and managing your cloud storage. Let's get started!",
 		})
 	})
+
+	r.Mount("/v1/api", s.registerRoutes())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		utils.SendAPIErrorResponse(
@@ -83,4 +87,18 @@ func (s *APIServer) Run() error {
 	)
 
 	return http.ListenAndServe(fmt.Sprintf("%s:%s", s.host, s.addr), r)
+}
+
+func (s *APIServer) registerRoutes() *chi.Mux {
+	r := chi.NewRouter()
+
+	googleProvider := providers.NewGoogleProvider()
+
+	linkHandler := handlers.NewLinkHandler(googleProvider)
+	WebhookHandler := handlers.NewWebhookHandler(s.connPool)
+
+	r.Mount("/link", linkHandler.RegisterRoutes())
+	r.Mount("/webhook", WebhookHandler.RegisterRoutes())
+
+	return r
 }

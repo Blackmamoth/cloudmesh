@@ -40,11 +40,27 @@ type RedisConfiguration struct {
 	DB   int    `envconfig:"REDIS_DB"                   default:"0"`
 }
 
+type OAuthConfiguration struct {
+	GOOGLE struct {
+		CLIENT_ID     string `envconfig:"GOOGLE_ID" required:"true"`
+		CLIENT_SECRET string `envconfig:"GOOGLE_SECRET" required:"true"`
+		OAUTH_SCOPES  string `envconfig:"GOOGLE_OAUTH_SCOPES" required:"true"`
+		REDIRECT_URI  string `envconfig:"GOOGLE_REDIRECT_URI" required:"true"`
+	} `envconfig:"GOOGLE_"`
+}
+
+type CookieStoreConfiguration struct {
+	AUTH_KEY       string `envconfig:"COOKIE_STORE_AUTH_KEY" required:"true"`
+	ENCRYPTION_KEY string `envconfig:"COOKIE_STORE_ENCRYPTION_KEY" required:"true"`
+}
+
 var (
-	APIConfig      APIConfiguration
-	PostgresConfig PostgresConfiguration
-	RedisConfig    RedisConfiguration
-	ClerkConfig    ClerkConfiguration
+	APIConfig         APIConfiguration
+	PostgresConfig    PostgresConfiguration
+	RedisConfig       RedisConfiguration
+	ClerkConfig       ClerkConfiguration
+	OAuthConfig       OAuthConfiguration
+	CookieStoreConfig CookieStoreConfiguration
 )
 
 func init() {
@@ -69,4 +85,13 @@ func loadEnv() {
 	if err := envconfig.Process("CLERK_", &ClerkConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
+
+	if err := envconfig.Process("", &OAuthConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
+	if err := envconfig.Process("COOKIE_", &CookieStoreConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
 }
