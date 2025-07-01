@@ -8,14 +8,68 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Account struct {
+	ID                    string           `json:"id"`
+	AccountID             string           `json:"account_id"`
+	ProviderID            string           `json:"provider_id"`
+	UserID                string           `json:"user_id"`
+	AccessToken           pgtype.Text      `json:"access_token"`
+	RefreshToken          pgtype.Text      `json:"refresh_token"`
+	IDToken               pgtype.Text      `json:"id_token"`
+	AccessTokenExpiresAt  pgtype.Timestamp `json:"access_token_expires_at"`
+	RefreshTokenExpiresAt pgtype.Timestamp `json:"refresh_token_expires_at"`
+	Scope                 pgtype.Text      `json:"scope"`
+	Password              pgtype.Text      `json:"password"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
+}
+
+type DrizzleDrizzleMigration struct {
+	ID        int32       `json:"id"`
+	Hash      string      `json:"hash"`
+	CreatedAt pgtype.Int8 `json:"created_at"`
+}
+
+type GooseDbVersion struct {
+	ID        int32            `json:"id"`
+	VersionID int64            `json:"version_id"`
+	IsApplied bool             `json:"is_applied"`
+	Tstamp    pgtype.Timestamp `json:"tstamp"`
+}
+
+type Jwk struct {
+	ID         string           `json:"id"`
+	PublicKey  string           `json:"public_key"`
+	PrivateKey string           `json:"private_key"`
+	CreatedAt  pgtype.Timestamp `json:"created_at"`
+}
+
+type Session struct {
+	ID        string           `json:"id"`
+	ExpiresAt pgtype.Timestamp `json:"expires_at"`
+	Token     string           `json:"token"`
+	CreatedAt pgtype.Timestamp `json:"created_at"`
+	UpdatedAt pgtype.Timestamp `json:"updated_at"`
+	IpAddress pgtype.Text      `json:"ip_address"`
+	UserAgent pgtype.Text      `json:"user_agent"`
+	UserID    string           `json:"user_id"`
+}
+
 type User struct {
-	ID           string
-	Username     string
-	FirstName    pgtype.Text
-	LastName     pgtype.Text
-	EmailAddress string
-	Provider     string
-	ImageUrl     string
-	CreatedAt    pgtype.Timestamp
-	UpdatedAt    pgtype.Timestamp
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	Email         string           `json:"email"`
+	EmailVerified bool             `json:"email_verified"`
+	Image         pgtype.Text      `json:"image"`
+	CreatedAt     pgtype.Timestamp `json:"created_at"`
+	UpdatedAt     pgtype.Timestamp `json:"updated_at"`
+}
+
+type Verification struct {
+	ID         string           `json:"id"`
+	Identifier string           `json:"identifier"`
+	Value      string           `json:"value"`
+	ExpiresAt  pgtype.Timestamp `json:"expires_at"`
+	CreatedAt  pgtype.Timestamp `json:"created_at"`
+	UpdatedAt  pgtype.Timestamp `json:"updated_at"`
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/blackmamoth/cloudmesh/pkg/handlers"
 	"github.com/blackmamoth/cloudmesh/pkg/providers"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
-	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -21,11 +20,6 @@ type APIServer struct {
 	host     string
 	addr     string
 	connPool *pgxpool.Pool
-}
-
-func init() {
-	clerk.SetKey(config.ClerkConfig.SECRET_KEY)
-	config.LOGGER.Info("Clerk secret key set")
 }
 
 func NewAPIServer(host, addr string, connPool *pgxpool.Pool) *APIServer {
@@ -95,10 +89,8 @@ func (s *APIServer) registerRoutes() *chi.Mux {
 	googleProvider := providers.NewGoogleProvider()
 
 	linkHandler := handlers.NewLinkHandler(googleProvider)
-	WebhookHandler := handlers.NewWebhookHandler(s.connPool)
 
 	r.Mount("/link", linkHandler.RegisterRoutes())
-	r.Mount("/webhook", WebhookHandler.RegisterRoutes())
 
 	return r
 }

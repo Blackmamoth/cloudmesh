@@ -15,6 +15,7 @@ import {
 import { Button } from "@heroui/button";
 import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
+import { authClient } from "@/lib/auth-client";
 
 interface AddProviderButtonProps {
   variant: "button" | "floating";
@@ -159,6 +160,17 @@ export const AddProviderButton: React.FC<AddProviderButtonProps> = ({
   );
 
   function renderModal() {
+    const onLink = async () => {
+      await authClient.getSession({
+        fetchOptions: {
+          onSuccess: (ctx) => {
+            const jwt = ctx.response.headers.get("set-auth-jwt");
+            console.log(jwt);
+          },
+        },
+      });
+    };
+
     if (!selectedProvider) return null;
 
     return (
@@ -212,7 +224,7 @@ export const AddProviderButton: React.FC<AddProviderButtonProps> = ({
                 <Button
                   color="primary"
                   startContent={<Icon icon={selectedProvider.icon} />}
-                  onPress={onClose}
+                  onPress={onLink}
                 >
                   Connect to {selectedProvider.name}
                 </Button>

@@ -1,2 +1,2 @@
--- name: InsertUser :exec
-INSERT INTO users (id, username, first_name, last_name, email_address, provider, image_url) VALUES (@id, @username, @first_name, @last_name, @email_address, @provider, @image_url);
+-- name: TestQuery :one
+SELECT 123;

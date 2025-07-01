@@ -7,33 +7,15 @@ package repository
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const insertUser = `-- name: InsertUser :exec
-INSERT INTO users (id, username, first_name, last_name, email_address, provider, image_url) VALUES ($1, $2, $3, $4, $5, $6, $7)
+const testQuery = `-- name: TestQuery :one
+SELECT 123
 `
 
-type InsertUserParams struct {
-	ID           string
-	Username     string
-	FirstName    pgtype.Text
-	LastName     pgtype.Text
-	EmailAddress string
-	Provider     string
-	ImageUrl     string
-}
-
-func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
-	_, err := q.db.Exec(ctx, insertUser,
-		arg.ID,
-		arg.Username,
-		arg.FirstName,
-		arg.LastName,
-		arg.EmailAddress,
-		arg.Provider,
-		arg.ImageUrl,
-	)
-	return err
+func (q *Queries) TestQuery(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, testQuery)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }

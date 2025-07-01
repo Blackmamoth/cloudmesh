@@ -2,7 +2,6 @@ import React from "react";
 import { Button } from "@heroui/button";
 import { Navbar, NavbarContent, NavbarItem } from "@heroui/navbar";
 import { Icon } from "@iconify/react";
-import { UserButton } from "@clerk/nextjs";
 
 import { ThemeSwitcher } from "@/components/landing/theme-switcher";
 
@@ -51,9 +50,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onMenuClick }) => {
           <ThemeSwitcher />
         </NavbarItem>
 
-        <NavbarItem>
-          <UserButton />
-        </NavbarItem>
+        <NavbarItem></NavbarItem>
       </NavbarContent>
     </Navbar>
   );

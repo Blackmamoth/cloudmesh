@@ -9,7 +9,6 @@ import {
 } from "@heroui/navbar";
 import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
-import { SignInButton } from "@clerk/nextjs";
 
 import { ThemeSwitcher } from "./theme-switcher";
 
@@ -57,17 +56,15 @@ export const Navbar = () => {
           <ThemeSwitcher />
         </NavbarItem>
         <NavbarItem>
-          <SignInButton>
-            <Button
-              as={Link}
-              className="font-medium"
-              color="primary"
-              href="#"
-              variant="flat"
-            >
-              Sign In
-            </Button>
-          </SignInButton>
+          <Button
+            as={Link}
+            className="font-medium"
+            color="primary"
+            href="/auth"
+            variant="flat"
+          >
+            Sign In
+          </Button>
         </NavbarItem>
         <NavbarItem>
           <Button
