@@ -9,13 +9,32 @@ import (
 	"context"
 )
 
-const testQuery = `-- name: TestQuery :one
-SELECT 123
+const getJWKSPublicKey = `-- name: GetJWKSPublicKey :one
+SELECT public_key FROM jwks LIMIT 1
 `
 
-func (q *Queries) TestQuery(ctx context.Context) (int32, error) {
-	row := q.db.QueryRow(ctx, testQuery)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
+func (q *Queries) GetJWKSPublicKey(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, getJWKSPublicKey)
+	var public_key string
+	err := row.Scan(&public_key)
+	return public_key, err
+}
+
+const getUserByID = `-- name: GetUserByID :one
+SELECT id, name, email, email_verified, image, created_at, updated_at FROM "user" WHERE id = $1
+`
+
+func (q *Queries) GetUserByID(ctx context.Context, userID string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByID, userID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.EmailVerified,
+		&i.Image,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
