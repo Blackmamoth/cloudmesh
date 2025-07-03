@@ -7,7 +7,6 @@ import (
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/handlers"
-	"github.com/blackmamoth/cloudmesh/pkg/providers"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -86,9 +85,7 @@ func (s *APIServer) Run() error {
 func (s *APIServer) registerRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
-	googleProvider := providers.NewGoogleProvider()
-
-	linkHandler := handlers.NewLinkHandler(googleProvider)
+	linkHandler := handlers.NewLinkHandler()
 
 	r.Mount("/link", linkHandler.RegisterRoutes())
 

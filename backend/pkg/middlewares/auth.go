@@ -69,7 +69,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 
 			db.RedisClient.Set(r.Context(), "public_key_jwk", publicKeyJWK, time.Hour)
 		} else {
-			publicKeyJWK = publicKeyJWKCache.String()
+			publicKeyJWK = publicKeyJWKCache.Val()
 		}
 
 		jwtClaims, err := utils.ParseJWT(tokenString, publicKeyJWK)

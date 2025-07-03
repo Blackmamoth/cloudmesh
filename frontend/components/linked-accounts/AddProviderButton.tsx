@@ -160,15 +160,36 @@ export const AddProviderButton: React.FC<AddProviderButtonProps> = ({
   );
 
   function renderModal() {
+    const { data } = authClient.useSession();
+
     const onLink = async () => {
-      await authClient.getSession({
-        fetchOptions: {
-          onSuccess: (ctx) => {
-            const jwt = ctx.response.headers.get("set-auth-jwt");
-            console.log(jwt);
-          },
-        },
-      });
+      // await authClient.getSession({
+      //   fetchOptions: {
+      //     onSuccess: async (ctx) => {
+      //       const jwt = ctx.response.headers.get("set-auth-jwt");
+      //       console.log(jwt);
+      //       const response = await fetch(
+      //         "http://localhost:8080/v1/api/link/google",
+      //         {
+      //           method: "GET",
+      //           headers: {
+      //             Authorization: `Bearer ${jwt}`,
+      //           },
+      //         }
+      //       );
+      //       const body = await response.json();
+      //       window.location.href = body.data.consent_page_url;
+      //     },
+      //   },
+      // });
+      // });
+      const id = data?.user.id;
+      const obj = btoa(
+        JSON.stringify({ user_id: id, nonce: crypto.randomUUID() })
+      );
+      const url = `http://localhost:8080/v1/api/link/google?state=${encodeURIComponent(obj)}`;
+      console.log(url);
+      document.location.href = url;
     };
 
     if (!selectedProvider) return null;

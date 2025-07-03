@@ -3,12 +3,13 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
-	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
 )
@@ -27,6 +28,8 @@ var (
 	ErrFailSessionCleanUp  = errors.New("failed to clean up session values")
 )
 
+const googleSessionName = "cloudmesh-google-oauth-session"
+
 func NewGoogleProvider() *GoogleProvider {
 	return &GoogleProvider{
 		Config: oauth2.Config{
@@ -39,70 +42,85 @@ func NewGoogleProvider() *GoogleProvider {
 	}
 }
 
-func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, sessionName string) (string, error) {
+func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error) {
+
 	verifier := oauth2.GenerateVerifier()
-	state := uuid.New().String()
 
-	session, err := store.Get(r, sessionName)
+	encodedState, oauthState, err := GenerateOauthState(userID)
 	if err != nil {
+		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", "google"), zap.Error(err))
 		return "", err
 	}
 
-	session.Values["pkce_verifier"] = verifier
-	session.Values["oauth_state"] = state
-
-	err = sessions.Save(r, w)
+	session, err := store.Get(r, googleSessionName)
 	if err != nil {
+		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", "google"), zap.Error(err))
 		return "", err
 	}
 
-	url := p.Config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "consent"))
+	session.Values["pkce_verifier_google"] = verifier
+	session.Values["oauth_csrf_token_google"] = oauthState.CsrfToken
+
+	err = session.Save(r, w)
+	if err != nil {
+		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", "google"), zap.Error(err))
+		return "", err
+	}
+
+	url := p.Config.AuthCodeURL(encodedState, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "consent"))
+
 	return url, nil
 }
 
-func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, sessionName string) (*oauth2.Token, error) {
+func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, error) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		return nil, ErrNoCode
+		return nil, "", ErrNoCode
 	}
 
-	receivedState := r.URL.Query().Get("state")
-	if receivedState == "" {
-		return nil, ErrNoState
+	receivedEncodedState := r.URL.Query().Get("state")
+	if receivedEncodedState == "" {
+		return nil, "", ErrNoState
 	}
 
-	session, err := store.Get(r, sessionName)
+	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
 	if err != nil {
-		return nil, ErrNoSession
+		config.LOGGER.Error("failed to decode received state", zap.String("provider", "google"), zap.Error(err))
+		return nil, "", fmt.Errorf("failed to decode received state")
 	}
 
-	storedVerifier, ok := session.Values["pkce_verifier"].(string)
+	session, err := store.Get(r, googleSessionName)
+	if err != nil {
+		return nil, "", ErrNoSession
+	}
+
+	storedVerifier, ok := session.Values["pkce_verifier_google"].(string)
 	if !ok || storedVerifier == "" {
-		return nil, ErrNoVerifier
+		return nil, "", ErrNoVerifier
 	}
 
-	storedState, ok := session.Values["oauth_state"].(string)
-	if !ok || storedState == "" {
-		return nil, ErrNoState
+	storedCsrfToken, ok := session.Values["oauth_csrf_token_google"].(string)
+	if !ok || storedCsrfToken == "" {
+		return nil, "", ErrNoState
 	}
 
-	if receivedState != storedState {
-		return nil, ErrInvalidState
+	if receivedOauthState.CsrfToken != storedCsrfToken {
+		return nil, "", ErrInvalidState
 	}
 
-	delete(session.Values, "pkce_verifier")
-	delete(session.Values, "oauth_state")
+	delete(session.Values, "pkce_verifier_google")
+	delete(session.Values, "oauth_csrf_token_google")
 	err = session.Save(r, w)
-
 	if err != nil {
-		return nil, ErrFailSessionCleanUp
+		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", "google"), zap.Error(err))
 	}
 
 	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
 	if err != nil {
-		return nil, err
+		config.LOGGER.Error("token exchange failed", zap.String("provider", "google"), zap.Error(err))
+		return nil, "", err
 	}
 
-	return tok, nil
+	return tok, receivedOauthState.UserID, nil
 }

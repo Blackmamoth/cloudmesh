@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/hex"
-	"errors"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,19 +15,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/sessions"
 	"go.uber.org/zap"
-	"golang.org/x/oauth2"
 )
 
-type LinkHandler struct {
-	GoogleProvider providers.GoogleProvider
+type LinkHandler struct{}
+
+type OAuthState struct {
+	UserID string `json:"user_id"`
+	Nonce  string `json:"nonce"`
 }
 
 var store *sessions.CookieStore
 
-var (
-	ErrUnsupportedProvider = errors.New("invalid or unsupported provider")
-	ErrNoCode              = errors.New("authorization code not found in redirect url")
-)
+var oauthProviders map[string]providers.Provider
 
 func init() {
 	authKey, err := hex.DecodeString(config.CookieStoreConfig.AUTH_KEY)
@@ -47,12 +48,13 @@ func init() {
 		Secure:   config.APIConfig.ENVIRONMENT != "development",
 		SameSite: http.SameSiteLaxMode,
 	}
+
+	oauthProviders = make(map[string]providers.Provider)
+	oauthProviders["google"] = providers.NewGoogleProvider()
 }
 
-func NewLinkHandler(googleProvider *providers.GoogleProvider) *LinkHandler {
-	return &LinkHandler{
-		GoogleProvider: *googleProvider,
-	}
+func NewLinkHandler() *LinkHandler {
+	return &LinkHandler{}
 }
 
 func (h *LinkHandler) RegisterRoutes() *chi.Mux {
@@ -65,22 +67,41 @@ func (h *LinkHandler) RegisterRoutes() *chi.Mux {
 }
 
 func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
-	provider := chi.URLParam(r, "provider")
+	providerName := chi.URLParam(r, "provider")
 
-	provider = strings.ToLower(provider)
+	providerName = strings.ToLower(providerName)
 
-	var consentPageURL string
+	state := r.URL.Query().Get("state")
 
-	switch provider {
-	case "google":
-		url, err := h.GoogleProvider.GetConsentPageURL(w, r, store, "google-oauth-session")
-		if err != nil {
-			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, err)
-			return
-		}
-		consentPageURL = url
-	default:
-		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, ErrUnsupportedProvider)
+	if state == "" {
+		utils.SendAPIErrorResponse(w, http.StatusBadRequest, fmt.Errorf("state not passed in URL"))
+		return
+	}
+
+	decoded, err := base64.URLEncoding.DecodeString(state)
+	if err != nil {
+		config.LOGGER.Error("could not deocde base64 encoded state", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusBadRequest, err)
+		return
+	}
+
+	var oauthState OAuthState
+	err = json.Unmarshal(decoded, &oauthState)
+	if err != nil {
+		config.LOGGER.Error("failed to unmarshal into OAuthState", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusBadRequest, fmt.Errorf("state not passed in URL"))
+		return
+	}
+
+	provider, ok := oauthProviders[providerName]
+	if !ok {
+		utils.SendAPIErrorResponse(w, http.StatusBadRequest, providers.ErrUnsupportedProvider)
+		return
+	}
+
+	consentPageURL, err := provider.GetConsentPageURL(w, r, store, oauthState.UserID)
+	if err != nil {
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("an error occured, please try again later"))
 		return
 	}
 
@@ -88,23 +109,24 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request) {
-	provider := chi.URLParam(r, "provider")
+	providerName := chi.URLParam(r, "provider")
 
-	provider = strings.ToLower(provider)
+	providerName = strings.ToLower(providerName)
 
-	var token *oauth2.Token
-
-	switch provider {
-	case "google":
-		tok, err := h.GoogleProvider.GetToken(w, r, store, "google-oauth-session")
-		if err != nil {
-			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, err)
-		}
-		token = tok
-	default:
-		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, ErrUnsupportedProvider)
+	provider, ok := oauthProviders[providerName]
+	if !ok {
+		utils.SendAPIErrorResponse(w, http.StatusBadRequest, providers.ErrUnsupportedProvider)
 		return
 	}
 
-	utils.SendAPIResponse(w, http.StatusOK, token)
+	token, userId, err := provider.GetToken(w, r, store)
+	if err != nil {
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
+		"token":   token,
+		"user_id": userId,
+	})
 }
