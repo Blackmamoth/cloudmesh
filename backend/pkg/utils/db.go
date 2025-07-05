@@ -17,7 +17,7 @@ func WithTransaction(ctx context.Context, conn *pgxpool.Conn, fn func(pgx.Tx) er
 	}
 
 	defer func() {
-		if r := recover(); err != nil {
+		if r := recover(); r != nil {
 			tx.Rollback(context.Background())
 			panic(r)
 		} else if err != nil {

@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -11,15 +13,34 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type UserAccountInfo struct {
+	Provider       string `json:"provider"`
+	ProviderUserID string `json:"provider_user_id"`
+	Email          string `json:"email"`
+	Name           string `json:"name"`
+	AvatarURL      string `json:"avatar_url"`
+}
+
 type Provider interface {
 	GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error)
-	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, error)
+	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error)
+	GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error)
 }
 
 type OAuthState struct {
 	UserID    string `json:"user_id"`
 	CsrfToken string `json:"csrf_token"`
 }
+
+var (
+	ErrUnsupportedProvider = errors.New("invalid or unsupported provider")
+	ErrNoCode              = errors.New("authorization code not found in redirect url")
+	ErrNoState             = errors.New("state parameter not found")
+	ErrNoSession           = errors.New("session does not exist or can't be retrieved")
+	ErrNoVerifier          = errors.New("PKCE verifier missing or invalid")
+	ErrInvalidState        = errors.New("invalid state parameter")
+	ErrFailSessionCleanUp  = errors.New("failed to clean up session values")
+)
 
 func GenerateOauthState(userID string) (string, *OAuthState, error) {
 	csrfToken := uuid.New().String()

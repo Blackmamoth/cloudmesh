@@ -10,14 +10,20 @@ import (
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/providers"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
+	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/sessions"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
-type LinkHandler struct{}
+type LinkHandler struct {
+	connPool *pgxpool.Pool
+}
 
 type OAuthState struct {
 	UserID string `json:"user_id"`
@@ -51,10 +57,13 @@ func init() {
 
 	oauthProviders = make(map[string]providers.Provider)
 	oauthProviders["google"] = providers.NewGoogleProvider()
+	oauthProviders["dropbox"] = providers.NewDropboxProvider()
 }
 
-func NewLinkHandler() *LinkHandler {
-	return &LinkHandler{}
+func NewLinkHandler(connPool *pgxpool.Pool) *LinkHandler {
+	return &LinkHandler{
+		connPool: connPool,
+	}
 }
 
 func (h *LinkHandler) RegisterRoutes() *chi.Mux {
@@ -62,7 +71,6 @@ func (h *LinkHandler) RegisterRoutes() *chi.Mux {
 
 	r.Get("/{provider}", h.linkAccount)
 	r.Get("/{provider}/callback", h.linkAccountCallback)
-
 	return r
 }
 
@@ -71,10 +79,16 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 
 	providerName = strings.ToLower(providerName)
 
+	provider, ok := oauthProviders[providerName]
+	if !ok {
+		h.errorRedirect(w, r)
+		return
+	}
+
 	state := r.URL.Query().Get("state")
 
 	if state == "" {
-		utils.SendAPIErrorResponse(w, http.StatusBadRequest, fmt.Errorf("state not passed in URL"))
+		h.errorRedirect(w, r)
 		return
 	}
 
@@ -89,19 +103,19 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(decoded, &oauthState)
 	if err != nil {
 		config.LOGGER.Error("failed to unmarshal into OAuthState", zap.Error(err))
-		utils.SendAPIErrorResponse(w, http.StatusBadRequest, fmt.Errorf("state not passed in URL"))
+		h.errorRedirect(w, r)
 		return
 	}
 
-	provider, ok := oauthProviders[providerName]
-	if !ok {
-		utils.SendAPIErrorResponse(w, http.StatusBadRequest, providers.ErrUnsupportedProvider)
+	if oauthState.UserID == "" {
+		h.errorRedirect(w, r)
 		return
 	}
 
+	fmt.Println(oauthState)
 	consentPageURL, err := provider.GetConsentPageURL(w, r, store, oauthState.UserID)
 	if err != nil {
-		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("an error occured, please try again later"))
+		h.errorRedirect(w, r)
 		return
 	}
 
@@ -115,18 +129,54 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	provider, ok := oauthProviders[providerName]
 	if !ok {
-		utils.SendAPIErrorResponse(w, http.StatusBadRequest, providers.ErrUnsupportedProvider)
+		h.errorRedirect(w, r)
 		return
 	}
 
-	token, userId, err := provider.GetToken(w, r, store)
+	token, userId, accountInfo, err := provider.GetToken(w, r, store)
 	if err != nil {
-		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, err)
+		h.errorRedirect(w, r)
 		return
 	}
 
-	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
-		"token":   token,
-		"user_id": userId,
+	config.LOGGER.Info("user", zap.String("userId", userId))
+
+	addCountParams := repository.AddAccountDetailsParams{
+		UserID:         userId,
+		Provider:       repository.ProviderEnum(providerName),
+		ProviderUserID: accountInfo.ProviderUserID,
+		AccessToken:    token.AccessToken,
+		RefreshToken:   db.PGTextField(token.RefreshToken),
+		TokenType:      db.PGTextField(token.TokenType),
+		Expiry:         db.PGTimestamptzField(token.Expiry),
+		Email:          accountInfo.Email,
+		Name:           accountInfo.Name,
+		AvatarUrl:      db.PGTextField(accountInfo.AvatarURL),
+	}
+
+	conn, err := h.connPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("could not get a connection from db pool", zap.String("provider", providerName), zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+	defer conn.Release()
+
+	err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
+		queries := repository.New(conn).WithTx(tx)
+
+		return queries.AddAccountDetails(r.Context(), addCountParams)
 	})
+
+	if err != nil {
+		config.LOGGER.Error("an error occured while inserting account details", zap.String("provider", providerName), zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/linked-accounts", config.APIConfig.FRONTEND_HOST), http.StatusFound)
+}
+
+func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, fmt.Sprintf("%s/error", config.APIConfig.FRONTEND_HOST), http.StatusFound)
 }

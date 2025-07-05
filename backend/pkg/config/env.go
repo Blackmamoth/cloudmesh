@@ -43,6 +43,12 @@ type OAuthConfiguration struct {
 		OAUTH_SCOPES  string `envconfig:"GOOGLE_OAUTH_SCOPES" required:"true"`
 		REDIRECT_URI  string `envconfig:"GOOGLE_REDIRECT_URI" required:"true"`
 	} `envconfig:"GOOGLE_"`
+	DROPBOX struct {
+		CLIENT_ID     string `envconfig:"DROPBOX_ID" required:"true"`
+		CLIENT_SECRET string `envconfig:"DROPBOX_SECRET" required:"true"`
+		OAUTH_SCOPES  string `envconfig:"DROPBOX_OAUTH_SCOPES" required:"true"`
+		REDIRECT_URI  string `envconfig:"DROPBOX_REDIRECT_URI" required:"true"`
+	} `envconfig:"DROPBOX_"`
 }
 
 type CookieStoreConfiguration struct {

@@ -19,7 +19,7 @@ export const auth = betterAuth({
     github: {
       clientId: OAuthConfig.GITHUB_CLIENT_ID,
       clientSecret: OAuthConfig.GITHUB_CLIENT_SECRET,
-      redirectURI: OAuthConfig.GOOGLE_CALLBACK_URL,
+      redirectURI: OAuthConfig.GITHUB_CALLBACK_URL,
     },
   },
   plugins: [jwt()],

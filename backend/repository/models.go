@@ -5,8 +5,53 @@
 package repository
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type ProviderEnum string
+
+const (
+	ProviderEnumGoogle  ProviderEnum = "google"
+	ProviderEnumDropbox ProviderEnum = "dropbox"
+)
+
+func (e *ProviderEnum) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ProviderEnum(s)
+	case string:
+		*e = ProviderEnum(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ProviderEnum: %T", src)
+	}
+	return nil
+}
+
+type NullProviderEnum struct {
+	ProviderEnum ProviderEnum `json:"provider_enum"`
+	Valid        bool         `json:"valid"` // Valid is true if ProviderEnum is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullProviderEnum) Scan(value interface{}) error {
+	if value == nil {
+		ns.ProviderEnum, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ProviderEnum.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullProviderEnum) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ProviderEnum), nil
+}
 
 type Account struct {
 	ID                    string           `json:"id"`
@@ -30,18 +75,25 @@ type DrizzleDrizzleMigration struct {
 	CreatedAt pgtype.Int8 `json:"created_at"`
 }
 
-type GooseDbVersion struct {
-	ID        int32            `json:"id"`
-	VersionID int64            `json:"version_id"`
-	IsApplied bool             `json:"is_applied"`
-	Tstamp    pgtype.Timestamp `json:"tstamp"`
-}
-
 type Jwk struct {
 	ID         string           `json:"id"`
 	PublicKey  string           `json:"public_key"`
 	PrivateKey string           `json:"private_key"`
 	CreatedAt  pgtype.Timestamp `json:"created_at"`
+}
+
+type LinkedAccount struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         string             `json:"user_id"`
+	Provider       ProviderEnum       `json:"provider"`
+	ProviderUserID string             `json:"provider_user_id"`
+	AccessToken    string             `json:"access_token"`
+	RefreshToken   pgtype.Text        `json:"refresh_token"`
+	TokenType      pgtype.Text        `json:"token_type"`
+	Expiry         pgtype.Timestamptz `json:"expiry"`
+	Email          string             `json:"email"`
+	Name           string             `json:"name"`
+	AvatarUrl      pgtype.Text        `json:"avatar_url"`
 }
 
 type Session struct {

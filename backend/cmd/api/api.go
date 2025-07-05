@@ -37,7 +37,7 @@ func (s *APIServer) Run() error {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
-	r.Use(middleware.Heartbeat("/health-check"))
+	r.Use(middleware.Heartbeat("/health"))
 	r.Use(middleware.Compress(6, "gzip", "brotli"))
 
 	r.Use(cors.Handler(cors.Options{
@@ -85,9 +85,10 @@ func (s *APIServer) Run() error {
 func (s *APIServer) registerRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
-	linkHandler := handlers.NewLinkHandler()
+	linkHandler := handlers.NewLinkHandler(s.connPool)
 
 	r.Mount("/link", linkHandler.RegisterRoutes())
+	config.LOGGER.Info("Mounted link handler")
 
 	return r
 }

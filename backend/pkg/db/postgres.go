@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -82,4 +83,12 @@ func connectPostgres() (*pgxpool.Config, error) {
 	)
 
 	return poolConfig, nil
+}
+
+func PGTextField(val string) pgtype.Text {
+	return pgtype.Text{String: val, Valid: val != ""}
+}
+
+func PGTimestamptzField(val time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: val, Valid: !val.IsZero()}
 }
