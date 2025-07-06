@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addAccountDetails = `-- name: AddAccountDetails :exec
+const addAccountDetails = `-- name: AddAccountDetails :one
 INSERT INTO linked_account (
     user_id, provider, provider_user_id, access_token, refresh_token, token_type, expiry, email, name, avatar_url
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-)
+) RETURNING id
 `
 
 type AddAccountDetailsParams struct {
@@ -32,8 +32,8 @@ type AddAccountDetailsParams struct {
 	AvatarUrl      pgtype.Text        `json:"avatar_url"`
 }
 
-func (q *Queries) AddAccountDetails(ctx context.Context, arg AddAccountDetailsParams) error {
-	_, err := q.db.Exec(ctx, addAccountDetails,
+func (q *Queries) AddAccountDetails(ctx context.Context, arg AddAccountDetailsParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, addAccountDetails,
 		arg.UserID,
 		arg.Provider,
 		arg.ProviderUserID,
@@ -45,5 +45,7 @@ func (q *Queries) AddAccountDetails(ctx context.Context, arg AddAccountDetailsPa
 		arg.Name,
 		arg.AvatarUrl,
 	)
-	return err
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

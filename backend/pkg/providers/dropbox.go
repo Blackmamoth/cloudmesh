@@ -60,7 +60,6 @@ func (p *DropboxProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reque
 
 	verifier := oauth2.GenerateVerifier()
 
-	fmt.Println(userID)
 	encodedState, oauthState, err := GenerateOauthState(userID)
 	if err != nil {
 		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", "dropbox"), zap.Error(err))
@@ -123,8 +122,6 @@ func (p *DropboxProvider) GetToken(w http.ResponseWriter, r *http.Request, store
 	if receivedOauthState.CsrfToken != storedCsrfToken {
 		return nil, "", nil, ErrInvalidState
 	}
-
-	fmt.Println(receivedOauthState)
 
 	delete(session.Values, "pkce_verifier_dropbox")
 	delete(session.Values, "oauth_csrf_token_dropbox")

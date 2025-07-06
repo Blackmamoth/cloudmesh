@@ -30,7 +30,6 @@ func NewAPIServer(host, addr string, connPool *pgxpool.Pool) *APIServer {
 }
 
 func (s *APIServer) Run() error {
-	defer config.LOGGER.Sync()
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)

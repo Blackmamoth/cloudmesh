@@ -17,14 +17,17 @@ var (
 )
 
 func init() {
-	config.LOGGER.Sync()
-
 	poolConfig, err := connectPostgres()
 	if err != nil {
 		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
 	}
 
-	if err := pingPostgresConnection(poolConfig); err != nil {
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
+	}
+
+	if err := pingPostgresConnection(pool); err != nil {
 		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
 	}
 
@@ -32,23 +35,15 @@ func init() {
 
 	PoolConfig = poolConfig
 
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	if err != nil {
-		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
-	}
-
 	ConnPool = pool
 }
 
-func pingPostgresConnection(poolConfig *pgxpool.Config) error {
-	connPool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	if err != nil {
-		return err
-	}
+func pingPostgresConnection(connPool *pgxpool.Pool) error {
 	conn, err := connPool.Acquire(context.Background())
 	if err != nil {
 		return err
 	}
+
 	defer conn.Release()
 	return conn.Ping(context.Background())
 }

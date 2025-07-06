@@ -12,6 +12,7 @@ import (
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/providers"
+	"github.com/blackmamoth/cloudmesh/pkg/tasks"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/go-chi/chi/v5"
@@ -31,8 +32,6 @@ type OAuthState struct {
 }
 
 var store *sessions.CookieStore
-
-var oauthProviders map[string]providers.Provider
 
 func init() {
 	authKey, err := hex.DecodeString(config.CookieStoreConfig.AUTH_KEY)
@@ -54,10 +53,6 @@ func init() {
 		Secure:   config.APIConfig.ENVIRONMENT != "development",
 		SameSite: http.SameSiteLaxMode,
 	}
-
-	oauthProviders = make(map[string]providers.Provider)
-	oauthProviders["google"] = providers.NewGoogleProvider()
-	oauthProviders["dropbox"] = providers.NewDropboxProvider()
 }
 
 func NewLinkHandler(connPool *pgxpool.Pool) *LinkHandler {
@@ -79,7 +74,7 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 
 	providerName = strings.ToLower(providerName)
 
-	provider, ok := oauthProviders[providerName]
+	provider, ok := providers.OAuthProviders[providerName]
 	if !ok {
 		h.errorRedirect(w, r)
 		return
@@ -112,7 +107,6 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println(oauthState)
 	consentPageURL, err := provider.GetConsentPageURL(w, r, store, oauthState.UserID)
 	if err != nil {
 		h.errorRedirect(w, r)
@@ -127,7 +121,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	providerName = strings.ToLower(providerName)
 
-	provider, ok := oauthProviders[providerName]
+	provider, ok := providers.OAuthProviders[providerName]
 	if !ok {
 		h.errorRedirect(w, r)
 		return
@@ -138,8 +132,6 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		h.errorRedirect(w, r)
 		return
 	}
-
-	config.LOGGER.Info("user", zap.String("userId", userId))
 
 	addCountParams := repository.AddAccountDetailsParams{
 		UserID:         userId,
@@ -162,10 +154,20 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 	}
 	defer conn.Release()
 
+	var accountID string
+
 	err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
 		queries := repository.New(conn).WithTx(tx)
 
-		return queries.AddAccountDetails(r.Context(), addCountParams)
+		id, err := queries.AddAccountDetails(r.Context(), addCountParams)
+
+		if err != nil {
+			return err
+		}
+
+		accountID = id.String()
+
+		return nil
 	})
 
 	if err != nil {
@@ -173,6 +175,25 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		h.errorRedirect(w, r)
 		return
 	}
+
+	asynqclient := db.GetAsynqClient()
+
+	task, err := tasks.NewFileSyncTask(userId, accountID)
+
+	if err != nil {
+		config.LOGGER.Error("failed to create new file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
+	info, err := asynqclient.Enqueue(task)
+	if err != nil {
+		config.LOGGER.Error("failed to enqueue file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
+	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
 
 	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/linked-accounts", config.APIConfig.FRONTEND_HOST), http.StatusFound)
 }

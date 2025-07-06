@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
@@ -41,6 +42,14 @@ var (
 	ErrInvalidState        = errors.New("invalid state parameter")
 	ErrFailSessionCleanUp  = errors.New("failed to clean up session values")
 )
+
+var OAuthProviders map[string]Provider
+
+func init() {
+	OAuthProviders = make(map[string]Provider)
+	OAuthProviders[string(repository.ProviderEnumGoogle)] = NewGoogleProvider()
+	OAuthProviders[string(repository.ProviderEnumDropbox)] = NewDropboxProvider()
+}
 
 func GenerateOauthState(userID string) (string, *OAuthState, error) {
 	csrfToken := uuid.New().String()
