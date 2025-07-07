@@ -87,13 +87,15 @@ type LinkedAccount struct {
 	UserID         string             `json:"user_id"`
 	Provider       ProviderEnum       `json:"provider"`
 	ProviderUserID string             `json:"provider_user_id"`
+	Name           string             `json:"name"`
+	Email          string             `json:"email"`
+	AvatarUrl      pgtype.Text        `json:"avatar_url"`
 	AccessToken    string             `json:"access_token"`
 	RefreshToken   pgtype.Text        `json:"refresh_token"`
 	TokenType      pgtype.Text        `json:"token_type"`
 	Expiry         pgtype.Timestamptz `json:"expiry"`
-	Email          string             `json:"email"`
-	Name           string             `json:"name"`
-	AvatarUrl      pgtype.Text        `json:"avatar_url"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Session struct {
@@ -105,6 +107,25 @@ type Session struct {
 	IpAddress pgtype.Text      `json:"ip_address"`
 	UserAgent pgtype.Text      `json:"user_agent"`
 	UserID    string           `json:"user_id"`
+}
+
+type SyncedItem struct {
+	ID             pgtype.UUID        `json:"id"`
+	AccountID      pgtype.UUID        `json:"account_id"`
+	ProviderFileID string             `json:"provider_file_id"`
+	Name           string             `json:"name"`
+	Extension      string             `json:"extension"`
+	Size           int64              `json:"size"`
+	MimeType       pgtype.Text        `json:"mime_type"`
+	CreatedTime    pgtype.Timestamptz `json:"created_time"`
+	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
+	ThumbnailLink  pgtype.Text        `json:"thumbnail_link"`
+	PreviewLink    pgtype.Text        `json:"preview_link"`
+	WebViewLink    pgtype.Text        `json:"web_view_link"`
+	WebContentLink pgtype.Text        `json:"web_content_link"`
+	LinkExpiresAt  pgtype.Timestamptz `json:"link_expires_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {

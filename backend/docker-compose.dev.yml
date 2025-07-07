@@ -12,11 +12,27 @@ services:
       - POSTGRES_HOST=db
       - HOST=0.0.0.0
       - REDIS_HOST=redis
+      - APP_TYPE=api
     volumes:
       - .:/cloudmesh
     depends_on:
       - db
-      - redis 
+      - redis
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=db
+      - REDIS_HOST=redis
+      - APP_TYPE=worker
+    volumes:
+      - .:/cloudmesh
+    depends_on:
+      - backend
   db:
     image: postgres:17-alpine
     restart: always

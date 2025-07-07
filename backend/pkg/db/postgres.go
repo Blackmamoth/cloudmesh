@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -86,4 +87,20 @@ func PGTextField(val string) pgtype.Text {
 
 func PGTimestamptzField(val time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: val, Valid: !val.IsZero()}
+}
+
+func PGUUID(val string) (*pgtype.UUID, error) {
+	var pgUUID pgtype.UUID
+
+	parsedUUID, err := uuid.Parse(val)
+	if err != nil {
+		return nil, err
+	}
+
+	pgUUID = pgtype.UUID{
+		Bytes: parsedUUID,
+		Valid: true,
+	}
+
+	return &pgUUID, nil
 }

@@ -187,7 +187,7 @@ export const AddProviderButton: React.FC<AddProviderButtonProps> = ({
       const obj = btoa(
         JSON.stringify({ user_id: id, nonce: crypto.randomUUID() })
       );
-      const url = `http://localhost:8080/v1/api/link/dropbox?state=${encodeURIComponent(obj)}`;
+      const url = `http://localhost:8080/v1/api/link/google?state=${encodeURIComponent(obj)}`;
       console.log(url);
       document.location.href = url;
     };

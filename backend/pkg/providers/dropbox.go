@@ -9,7 +9,10 @@ import (
 	"strings"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
@@ -188,4 +191,8 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 	}
 
 	return &userInfo, nil
+}
+
+func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
+	return nil
 }

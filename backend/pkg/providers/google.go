@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/db"
+	"github.com/blackmamoth/cloudmesh/pkg/utils"
+	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
+	"google.golang.org/api/drive/v3"
 	oauth2Google "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/option"
 )
@@ -122,7 +130,7 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 }
 
 func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error) {
-	httpClient := p.Config.Client(ctx, token)
+	httpClient := p.getHTTPClient(token.AccessToken, token.RefreshToken)
 	svc, err := oauth2Google.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", "google"), zap.Error(err))
@@ -144,4 +152,105 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 	}
 
 	return &userAccountInfo, nil
+}
+
+func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
+
+	httpClient := p.getHTTPClient(authToken.AccessToken, authToken.RefreshToken.String)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+		return err
+	}
+
+	pageToken := ""
+
+	var files []repository.AddSyncedItemsParams
+
+	for {
+		fileList, err := driveService.Files.
+			List().
+			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, iconLink, trashed)").
+			PageToken(pageToken).
+			PageSize(1000).
+			Do()
+
+		if err != nil {
+			config.LOGGER.Error("an error occured while synching google drive files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+			return err
+		}
+
+		for _, file := range fileList.Files {
+
+			parsedCreatedTime, err := time.Parse(time.RFC3339, file.CreatedTime)
+			if err != nil {
+				parsedCreatedTime = time.Time{}
+			}
+
+			parsedModifiedTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
+			if err != nil {
+				parsedModifiedTime = time.Time{}
+			}
+
+			previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
+
+			files = append(files, repository.AddSyncedItemsParams{
+				AccountID:      accountID,
+				ProviderFileID: file.Id,
+				Name:           file.Name,
+				Extension:      file.FullFileExtension,
+				Size:           file.Size,
+				MimeType:       db.PGTextField(file.MimeType),
+				CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
+				ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+				ThumbnailLink:  db.PGTextField(file.ThumbnailLink),
+				PreviewLink:    db.PGTextField(previewLink),
+				WebViewLink:    db.PGTextField(file.WebViewLink),
+				WebContentLink: db.PGTextField(file.WebContentLink),
+				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			})
+		}
+
+		pageToken = fileList.NextPageToken
+
+		if pageToken == "" {
+			break
+		}
+	}
+
+	var insertedRows int64
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		queries := repository.New(conn).WithTx(tx)
+
+		inserted, err := queries.AddSyncedItems(ctx, files)
+
+		if err != nil {
+			return err
+		}
+
+		insertedRows = inserted
+
+		return nil
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert synced files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+		return nil
+	}
+
+	config.LOGGER.Info("Google drive sync successful", zap.Int64("item_count", insertedRows))
+
+	return nil
+}
+
+func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.Client {
+	token := &oauth2.Token{AccessToken: accessToken, RefreshToken: refreshToken}
+
+	tokenSource := p.Config.TokenSource(context.Background(), token)
+
+	reusableTokenSource := oauth2.ReuseTokenSource(token, tokenSource)
+
+	return oauth2.NewClient(context.Background(), reusableTokenSource)
 }

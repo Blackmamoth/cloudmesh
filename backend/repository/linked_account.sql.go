@@ -49,3 +49,26 @@ func (q *Queries) AddAccountDetails(ctx context.Context, arg AddAccountDetailsPa
 	err := row.Scan(&id)
 	return id, err
 }
+
+const getAuthTokens = `-- name: GetAuthTokens :one
+SELECT provider, access_token, refresh_token FROM public.linked_account WHERE
+user_id = $1 AND id = $2
+`
+
+type GetAuthTokensParams struct {
+	UserID    string      `json:"user_id"`
+	AccountID pgtype.UUID `json:"account_id"`
+}
+
+type GetAuthTokensRow struct {
+	Provider     ProviderEnum `json:"provider"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken pgtype.Text  `json:"refresh_token"`
+}
+
+func (q *Queries) GetAuthTokens(ctx context.Context, arg GetAuthTokensParams) (GetAuthTokensRow, error) {
+	row := q.db.QueryRow(ctx, getAuthTokens, arg.UserID, arg.AccountID)
+	var i GetAuthTokensRow
+	err := row.Scan(&i.Provider, &i.AccessToken, &i.RefreshToken)
+	return i, err
+}
