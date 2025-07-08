@@ -17,8 +17,10 @@ CREATE TABLE IF NOT EXISTS linked_account (
     token_type TEXT DEFAULT NULL,
     expiry TIMESTAMPTZ DEFAULT NULL,
 
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    last_synced_at TIMESTAMPTZ DEFAULT NULL,
 
     PRIMARY KEY (id),
     FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE

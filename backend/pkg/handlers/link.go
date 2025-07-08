@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -154,26 +156,67 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 	}
 	defer conn.Release()
 
-	var accountID string
+	queries := repository.New(conn)
 
-	err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
-		queries := repository.New(conn).WithTx(tx)
-
-		id, err := queries.AddAccountDetails(r.Context(), addCountParams)
-
-		if err != nil {
-			return err
-		}
-
-		accountID = id.String()
-
-		return nil
+	existingAccountID, err := queries.GetAccountByProviderID(r.Context(), repository.GetAccountByProviderIDParams{
+		UserID:         userId,
+		Provider:       repository.ProviderEnum(providerName),
+		ProviderUserID: accountInfo.ProviderUserID,
 	})
 
+	var accountID string
+	successQuery := "newAccount"
+
 	if err != nil {
-		config.LOGGER.Error("an error occured while inserting account details", zap.String("provider", providerName), zap.Error(err))
-		h.errorRedirect(w, r)
-		return
+		if errors.Is(err, sql.ErrNoRows) {
+			err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
+				qx := queries.WithTx(tx)
+
+				id, err := qx.AddAccountDetails(r.Context(), addCountParams)
+
+				if err != nil {
+					return err
+				}
+
+				accountID = id.String()
+
+				return nil
+			})
+
+			if err != nil {
+				config.LOGGER.Error("an error occured while inserting account details", zap.String("provider", providerName), zap.Error(err))
+				h.errorRedirect(w, r)
+				return
+			}
+		} else {
+			config.LOGGER.Error("failed to fetch existing account details", zap.Error(err))
+			h.errorRedirect(w, r)
+			return
+		}
+	} else {
+		accountID = existingAccountID.String()
+
+		err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
+			qx := queries.WithTx(tx)
+
+			err := qx.UpdateAuthTokens(r.Context(), repository.UpdateAuthTokensParams{
+				AccessToken:  token.AccessToken,
+				RefreshToken: db.PGTextField(token.RefreshToken),
+				TokenType:    db.PGTextField(token.TokenType),
+				Expiry:       db.PGTimestamptzField(token.Expiry),
+				AccountID:    existingAccountID,
+			})
+
+			return err
+		})
+
+		if err != nil {
+			config.LOGGER.Error("an error occured while updating auth tokens", zap.String("provider", providerName), zap.Error(err))
+			h.errorRedirect(w, r)
+			return
+		}
+
+		successQuery = "existingAccount"
 	}
 
 	asynqclient := db.GetAsynqClient()
@@ -195,7 +238,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
 
-	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/linked-accounts", config.APIConfig.FRONTEND_HOST), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/linked-accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
 }
 
 func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {

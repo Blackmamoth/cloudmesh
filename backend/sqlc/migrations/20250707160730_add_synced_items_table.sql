@@ -20,8 +20,8 @@ CREATE TABLE IF NOT EXISTS synced_items (
     web_content_link TEXT DEFAULT NULL,
     link_expires_at TIMESTAMPTZ DEFAULT NULL,
 
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(), 
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(), 
 
     PRIMARY KEY (id),
     FOREIGN KEY (account_id) REFERENCES linked_account(id) ON DELETE CASCADE

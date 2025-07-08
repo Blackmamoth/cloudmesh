@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -166,12 +168,31 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 
 	pageToken := ""
 
+	query := ""
+
+	queries := repository.New(conn)
+
+	lastSyncedAt, err := queries.GetLatestSyncTime(ctx, accountID)
+
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			config.LOGGER.Error("could not fetch timestamp for latest sync", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.String("account_id", accountID.String()))
+			return err
+		}
+	}
+
+	if lastSyncedAt.Valid {
+		query = fmt.Sprintf("modifiedTime > '%s'", lastSyncedAt.Time.Format(time.RFC3339))
+	}
+
 	var files []repository.AddSyncedItemsParams
+	totalItemCount := 0
 
 	for {
 		fileList, err := driveService.Files.
 			List().
-			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, iconLink, trashed)").
+			Q(query).
+			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, trashed)").
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
@@ -212,6 +233,37 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 			})
 		}
 
+		var insertedRows int64
+
+		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+			qx := queries.WithTx(tx)
+
+			inserted, err := qx.AddSyncedItems(ctx, files)
+
+			if err != nil {
+				return err
+			}
+
+			insertedRows = inserted
+
+			err = qx.UpdateLastSyncedTimestamp(ctx, accountID)
+
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to insert synced files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+			return err
+		}
+
+		config.LOGGER.Info("batch inserted", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
+
+		totalItemCount += int(insertedRows)
+
 		pageToken = fileList.NextPageToken
 
 		if pageToken == "" {
@@ -219,28 +271,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		}
 	}
 
-	var insertedRows int64
-
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-		queries := repository.New(conn).WithTx(tx)
-
-		inserted, err := queries.AddSyncedItems(ctx, files)
-
-		if err != nil {
-			return err
-		}
-
-		insertedRows = inserted
-
-		return nil
-	})
-
-	if err != nil {
-		config.LOGGER.Error("failed to insert synced files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
-		return nil
-	}
-
-	config.LOGGER.Info("Google drive sync successful", zap.Int64("item_count", insertedRows))
+	config.LOGGER.Info("Google drive sync successful", zap.Int("item_count", totalItemCount))
 
 	return nil
 }

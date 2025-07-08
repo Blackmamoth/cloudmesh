@@ -5,6 +5,18 @@ INSERT INTO linked_account (
     @user_id, @provider, @provider_user_id, @access_token, @refresh_token, @token_type, @expiry, @email, @name, @avatar_url
 ) RETURNING id;
 
+-- name: UpdateAuthTokens :exec
+UPDATE linked_account SET access_token = @access_token, refresh_token = @refresh_token, token_type = @token_type, expiry = @expiry WHERE id = @account_id;
+
+-- name: GetLatestSyncTime :one
+SELECT last_synced_at FROM linked_account WHERE id = @account_id;
+
+-- name: GetAccountByProviderID :one
+SELECT id FROM linked_account WHERE user_id = @user_id AND provider = @provider AND provider_user_id = @provider_user_id LIMIT 1;
+
 -- name: GetAuthTokens :one
-SELECT provider, access_token, refresh_token FROM public.linked_account WHERE
+SELECT provider, access_token, refresh_token FROM linked_account WHERE
 user_id = @user_id AND id = @account_id;
+
+-- name: UpdateLastSyncedTimestamp :exec
+UPDATE linked_account SET last_synced_at = NOW() WHERE id = @account_id;
