@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS linked_account (
     avatar_url TEXT DEFAULT NULL,
 
     access_token TEXT NOT NULL,
-    refresh_token TEXT DEFAULT NULL,
+    refresh_token TEXT NOT NULL,
     token_type TEXT DEFAULT NULL,
     expiry TIMESTAMPTZ DEFAULT NULL,
 
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS linked_account (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
 
     last_synced_at TIMESTAMPTZ DEFAULT NULL,
+    sync_page_token TEXT DEFAULT NULL,
 
     PRIMARY KEY (id),
     FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE

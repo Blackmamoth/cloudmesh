@@ -140,7 +140,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		Provider:       repository.ProviderEnum(providerName),
 		ProviderUserID: accountInfo.ProviderUserID,
 		AccessToken:    token.AccessToken,
-		RefreshToken:   db.PGTextField(token.RefreshToken),
+		RefreshToken:   token.RefreshToken,
 		TokenType:      db.PGTextField(token.TokenType),
 		Expiry:         db.PGTimestamptzField(token.Expiry),
 		Email:          accountInfo.Email,
@@ -201,7 +201,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 			err := qx.UpdateAuthTokens(r.Context(), repository.UpdateAuthTokensParams{
 				AccessToken:  token.AccessToken,
-				RefreshToken: db.PGTextField(token.RefreshToken),
+				RefreshToken: token.RefreshToken,
 				TokenType:    db.PGTextField(token.TokenType),
 				Expiry:       db.PGTimestamptzField(token.Expiry),
 				AccountID:    existingAccountID,

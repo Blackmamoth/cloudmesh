@@ -91,12 +91,13 @@ type LinkedAccount struct {
 	Email          string             `json:"email"`
 	AvatarUrl      pgtype.Text        `json:"avatar_url"`
 	AccessToken    string             `json:"access_token"`
-	RefreshToken   pgtype.Text        `json:"refresh_token"`
+	RefreshToken   string             `json:"refresh_token"`
 	TokenType      pgtype.Text        `json:"token_type"`
 	Expiry         pgtype.Timestamptz `json:"expiry"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	LastSyncedAt   pgtype.Timestamptz `json:"last_synced_at"`
+	SyncPageToken  pgtype.Text        `json:"sync_page_token"`
 }
 
 type Session struct {
@@ -117,6 +118,8 @@ type SyncedItem struct {
 	Name           string             `json:"name"`
 	Extension      string             `json:"extension"`
 	Size           int64              `json:"size"`
+	ParentFolder   pgtype.Text        `json:"parent_folder"`
+	IsFolder       bool               `json:"is_folder"`
 	MimeType       pgtype.Text        `json:"mime_type"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
@@ -125,6 +128,7 @@ type SyncedItem struct {
 	WebViewLink    pgtype.Text        `json:"web_view_link"`
 	WebContentLink pgtype.Text        `json:"web_content_link"`
 	LinkExpiresAt  pgtype.Timestamptz `json:"link_expires_at"`
+	ContentHash    pgtype.Text        `json:"content_hash"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }

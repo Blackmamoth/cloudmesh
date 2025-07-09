@@ -29,6 +29,7 @@ type Provider interface {
 	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error)
 	GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error)
 	SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error
+	RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error)
 }
 
 type OAuthState struct {

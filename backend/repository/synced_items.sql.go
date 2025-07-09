@@ -16,6 +16,9 @@ type AddSyncedItemsParams struct {
 	Extension      string             `json:"extension"`
 	Size           int64              `json:"size"`
 	MimeType       pgtype.Text        `json:"mime_type"`
+	ParentFolder   pgtype.Text        `json:"parent_folder"`
+	IsFolder       bool               `json:"is_folder"`
+	ContentHash    pgtype.Text        `json:"content_hash"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
 	ThumbnailLink  pgtype.Text        `json:"thumbnail_link"`

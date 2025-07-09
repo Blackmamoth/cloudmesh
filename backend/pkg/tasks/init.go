@@ -58,7 +58,7 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 	})
 
 	if err != nil {
-		config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
+		config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err), zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
 		return fmt.Errorf("failed to fetch auth tokens from db")
 	}
 

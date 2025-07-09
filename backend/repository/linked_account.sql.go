@@ -24,7 +24,7 @@ type AddAccountDetailsParams struct {
 	Provider       ProviderEnum       `json:"provider"`
 	ProviderUserID string             `json:"provider_user_id"`
 	AccessToken    string             `json:"access_token"`
-	RefreshToken   pgtype.Text        `json:"refresh_token"`
+	RefreshToken   string             `json:"refresh_token"`
 	TokenType      pgtype.Text        `json:"token_type"`
 	Expiry         pgtype.Timestamptz `json:"expiry"`
 	Email          string             `json:"email"`
@@ -80,7 +80,7 @@ type GetAuthTokensParams struct {
 type GetAuthTokensRow struct {
 	Provider     ProviderEnum `json:"provider"`
 	AccessToken  string       `json:"access_token"`
-	RefreshToken pgtype.Text  `json:"refresh_token"`
+	RefreshToken string       `json:"refresh_token"`
 }
 
 func (q *Queries) GetAuthTokens(ctx context.Context, arg GetAuthTokensParams) (GetAuthTokensRow, error) {
@@ -107,7 +107,7 @@ UPDATE linked_account SET access_token = $1, refresh_token = $2, token_type = $3
 
 type UpdateAuthTokensParams struct {
 	AccessToken  string             `json:"access_token"`
-	RefreshToken pgtype.Text        `json:"refresh_token"`
+	RefreshToken string             `json:"refresh_token"`
 	TokenType    pgtype.Text        `json:"token_type"`
 	Expiry       pgtype.Timestamptz `json:"expiry"`
 	AccountID    pgtype.UUID        `json:"account_id"`
@@ -125,10 +125,15 @@ func (q *Queries) UpdateAuthTokens(ctx context.Context, arg UpdateAuthTokensPara
 }
 
 const updateLastSyncedTimestamp = `-- name: UpdateLastSyncedTimestamp :exec
-UPDATE linked_account SET last_synced_at = NOW() WHERE id = $1
+UPDATE linked_account SET last_synced_at = NOW(), sync_page_token = $1 WHERE id = $2
 `
 
-func (q *Queries) UpdateLastSyncedTimestamp(ctx context.Context, accountID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, updateLastSyncedTimestamp, accountID)
+type UpdateLastSyncedTimestampParams struct {
+	SyncPageToken pgtype.Text `json:"sync_page_token"`
+	AccountID     pgtype.UUID `json:"account_id"`
+}
+
+func (q *Queries) UpdateLastSyncedTimestamp(ctx context.Context, arg UpdateLastSyncedTimestampParams) error {
+	_, err := q.db.Exec(ctx, updateLastSyncedTimestamp, arg.SyncPageToken, arg.AccountID)
 	return err
 }

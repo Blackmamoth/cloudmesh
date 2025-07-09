@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS synced_items (
     name TEXT NOT NULL,
     extension TEXT NOT NULL,
     size BIGINT NOT NULL,
+    parent_folder TEXT DEFAULT NULL,
+    is_folder BOOLEAN NOT NULL,
 
     mime_type TEXT DEFAULT NULL,
     created_time TIMESTAMPTZ DEFAULT NULL,
@@ -19,6 +21,7 @@ CREATE TABLE IF NOT EXISTS synced_items (
     web_view_link TEXT DEFAULT NULL,
     web_content_link TEXT DEFAULT NULL,
     link_expires_at TIMESTAMPTZ DEFAULT NULL,
+    content_hash TEXT DEFAULT NULL,
 
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(), 

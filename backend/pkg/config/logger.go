@@ -42,8 +42,9 @@ func initializeLogger() {
 		OutputPaths:       []string{"stderr"},
 		ErrorOutputPaths:  []string{"stderr"},
 		InitialFields: map[string]any{
-			"pid":         os.Getpid(),
-			"environment": ENVIRONMENT,
+			"pid":          os.Getpid(),
+			"environment":  ENVIRONMENT,
+			"container_id": os.Getenv("HOSTNAME"),
 		},
 	}
 

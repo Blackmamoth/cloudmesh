@@ -1,16 +1,25 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
+	"path"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/db"
+	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -42,9 +51,38 @@ type DropboxAccountInfo struct {
 	TeamMemberID    string `json:"team_member_id"`
 }
 
+type DropboxListFolderEntries struct {
+	ID             string    `json:"id"`
+	Tag            string    `json:".tag"`
+	Name           string    `json:"name"`
+	PathDisplay    string    `json:"path_display"`
+	PathLower      string    `json:"path_lower"`
+	ClientModified time.Time `json:"client_modified"`
+	ServerModified time.Time `json:"server_modified"`
+	ContentHash    string    `json:"content_hash"`
+	Revision       string    `json:"rev"`
+	Size           int       `json:"size"`
+}
+
+type DropboxListFolderResponse struct {
+	Entries []DropboxListFolderEntries `json:"entries"`
+	Cursor  string                     `json:"cursor"`
+	HasMore bool                       `json:"has_more"`
+}
+
+type DropboxAuthResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+	AccountID   string `json:"account_id"`
+}
+
 const (
-	DROPBOX_SESSION_NAME = "cloudmesh-dropbox-oauth-session"
-	DROPBOX_ACCOUNT_URL  = "https://api.dropboxapi.com/2/users/get_current_account"
+	DROPBOX_SESSION_NAME    = "cloudmesh-dropbox-oauth-session"
+	DROPBOX_PROVIDER_NAME   = string(repository.ProviderEnumDropbox)
+	DROPBOX_AUTH_URL        = "https://api.dropboxapi.com/oauth2/token"
+	DROPBOX_ACCOUNT_URL     = "https://api.dropboxapi.com/2/users/get_current_account"
+	DROPBOX_LIST_FOLDER_URL = "https://api.dropboxapi.com/2/files/list_folder"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -65,13 +103,13 @@ func (p *DropboxProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reque
 
 	encodedState, oauthState, err := GenerateOauthState(userID)
 	if err != nil {
-		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
 	session, err := store.Get(r, DROPBOX_SESSION_NAME)
 	if err != nil {
-		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -80,7 +118,7 @@ func (p *DropboxProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reque
 
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -103,7 +141,7 @@ func (p *DropboxProvider) GetToken(w http.ResponseWriter, r *http.Request, store
 
 	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
 	if err != nil {
-		config.LOGGER.Error("failed to decode received state", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to decode received state", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, fmt.Errorf("failed to decode received state")
 	}
 
@@ -130,12 +168,12 @@ func (p *DropboxProvider) GetToken(w http.ResponseWriter, r *http.Request, store
 	delete(session.Values, "oauth_csrf_token_dropbox")
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 	}
 
 	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
 	if err != nil {
-		config.LOGGER.Error("token exchange failed", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("token exchange failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, err
 	}
 
@@ -161,7 +199,7 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("dropbox /get_current_account request failed", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("dropbox /get_current_account request failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
@@ -169,7 +207,7 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read response body for /get_current_account", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to read response body for /get_current_account", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
@@ -178,12 +216,12 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 	err = json.Unmarshal(body, &response)
 
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal response body for /get_current_account", zap.String("provider", "dropbox"), zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal response body for /get_current_account", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
 	userInfo := UserAccountInfo{
-		Provider:       "dropbox",
+		Provider:       DROPBOX_PROVIDER_NAME,
 		ProviderUserID: response.AccountID,
 		Email:          response.Email,
 		Name:           response.Name.DisplayName,
@@ -194,5 +232,189 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 }
 
 func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
+
+	cursor := ""
+
+	totalItemCount := 0
+
+	var files []repository.AddSyncedItemsParams
+
+	for {
+		dropboxResponse, err := p.getDropboxFolderList(authToken.AccessToken, authToken.RefreshToken, cursor)
+
+		if err != nil {
+			config.LOGGER.Error("request failed to fetch dropbox folder list", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			return err
+		}
+
+		for _, entry := range dropboxResponse.Entries {
+
+			ext := filepath.Ext(entry.Name)
+
+			mimeType := mime.TypeByExtension(ext)
+
+			parentFolder := path.Dir(entry.PathDisplay)
+
+			files = append(files, repository.AddSyncedItemsParams{
+				AccountID:      accountID,
+				ProviderFileID: entry.ID,
+				Name:           entry.Name,
+				Extension:      ext,
+				Size:           int64(entry.Size),
+				MimeType:       db.PGTextField(mimeType),
+				ParentFolder:   db.PGTextField(parentFolder),
+				IsFolder:       entry.Tag == "folder",
+				ContentHash:    db.PGTextField(entry.ContentHash),
+				CreatedTime:    db.PGTimestamptzField(time.Time{}),
+				ModifiedTime:   db.PGTimestamptzField(entry.ClientModified),
+				ThumbnailLink:  db.PGTextField(""),
+				PreviewLink:    db.PGTextField(""),
+				WebViewLink:    db.PGTextField(""),
+				WebContentLink: db.PGTextField(""),
+				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			})
+		}
+
+		var insertedRows int64
+
+		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+			qx := repository.New(conn).WithTx(tx)
+
+			insertedRows, err = qx.AddSyncedItems(ctx, files)
+
+			if err != nil {
+				return err
+			}
+
+			return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
+				AccountID:     accountID,
+				SyncPageToken: db.PGTextField(cursor),
+			})
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to insert synced files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			return err
+		}
+
+		config.LOGGER.Info("batch inserted", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
+
+		totalItemCount += int(insertedRows)
+
+		cursor = dropboxResponse.Cursor
+
+		if !dropboxResponse.HasMore {
+			break
+		}
+
+		files = []repository.AddSyncedItemsParams{}
+	}
+
+	config.LOGGER.Info("Dropbox sync successful", zap.Int("item_count", totalItemCount))
+
 	return nil
+}
+
+func (p *DropboxProvider) getDropboxFolderList(accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
+	dropboxApiURL := DROPBOX_LIST_FOLDER_URL
+	reqBody := []byte(`{"path": "", "recursive": true}`)
+
+	if cursor != "" {
+		dropboxApiURL = fmt.Sprintf("%s/continue", DROPBOX_LIST_FOLDER_URL)
+		reqBody = fmt.Appendf(nil, "{\"cursor\": \"%s\"}", cursor)
+	}
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPost, dropboxApiURL, bytes.NewReader(reqBody))
+	if err != nil {
+		config.LOGGER.Error("an error occured while generating http request for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox sync task failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		config.LOGGER.Error("http request for dropbox sync task return 401", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return nil, fmt.Errorf("%s", string(body[:]))
+	}
+
+	if res.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request for dropbox sync task did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return nil, fmt.Errorf("%s", string(body[:]))
+	}
+
+	var dropboxResponse DropboxListFolderResponse
+
+	err = json.Unmarshal(body, &dropboxResponse)
+
+	return &dropboxResponse, err
+}
+
+func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error) {
+	data := url.Values{}
+
+	data.Add("grant_type", "refresh_token")
+	data.Add("refresh_token", refreshToken)
+	data.Add("client_id", p.Config.ClientID)
+	data.Add("client_secret", p.Config.ClientSecret)
+
+	res, err := http.Post(DROPBOX_AUTH_URL, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox token renewal failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return "", err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox token renewal", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return "", err
+	}
+
+	var dropboxResponse DropboxAuthResponse
+
+	err = json.Unmarshal(body, &dropboxResponse)
+
+	if err != nil {
+		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return "", err
+	}
+
+	expiresIn := time.Now().Add(time.Duration(dropboxResponse.ExpiresIn) * time.Second)
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := repository.New(conn).WithTx(tx)
+
+		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+			AccountID:    accountID,
+			AccessToken:  dropboxResponse.AccessToken,
+			RefreshToken: "",
+			TokenType:    db.PGTextField(dropboxResponse.TokenType),
+			Expiry:       db.PGTimestamptzField(expiresIn),
+		})
+
+		return err
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to update dropbox oauth tokens in db", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return "", err
+	}
+
+	return dropboxResponse.AccessToken, nil
 }

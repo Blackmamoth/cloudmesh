@@ -29,7 +29,10 @@ type GoogleProvider struct {
 	Config oauth2.Config
 }
 
-const GOOGLE_SESSION_NAME = "cloudmesh-google-oauth-session"
+const (
+	GOOGLE_SESSION_NAME  = "cloudmesh-google-oauth-session"
+	GOOGLE_PROVIDER_NAME = string(repository.ProviderEnumGoogle)
+)
 
 func NewGoogleProvider() *GoogleProvider {
 	return &GoogleProvider{
@@ -49,13 +52,13 @@ func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reques
 
 	encodedState, oauthState, err := GenerateOauthState(userID)
 	if err != nil {
-		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
 	session, err := store.Get(r, GOOGLE_SESSION_NAME)
 	if err != nil {
-		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -64,7 +67,7 @@ func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reques
 
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -87,7 +90,7 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 
 	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
 	if err != nil {
-		config.LOGGER.Error("failed to decode received state", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to decode received state", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, fmt.Errorf("failed to decode received state")
 	}
 
@@ -114,12 +117,12 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 	delete(session.Values, "oauth_csrf_token_google")
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 	}
 
 	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
 	if err != nil {
-		config.LOGGER.Error("token exchange failed", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("token exchange failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, err
 	}
 
@@ -135,18 +138,18 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 	httpClient := p.getHTTPClient(token.AccessToken, token.RefreshToken)
 	svc, err := oauth2Google.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, fmt.Errorf("failed to create oauth2 service")
 	}
 
 	userInfo, err := svc.Userinfo.Get().Do()
 	if err != nil {
-		config.LOGGER.Error("failed to fetch user info", zap.String("provider", "google"), zap.Error(err))
+		config.LOGGER.Error("failed to fetch user info", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, fmt.Errorf("failed to fetch user info")
 	}
 
 	userAccountInfo := UserAccountInfo{
-		Provider:       "google",
+		Provider:       DROPBOX_PROVIDER_NAME,
 		ProviderUserID: userInfo.Id,
 		Email:          userInfo.Email,
 		Name:           userInfo.Name,
@@ -158,11 +161,11 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 
 func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
 
-	httpClient := p.getHTTPClient(authToken.AccessToken, authToken.RefreshToken.String)
+	httpClient := p.getHTTPClient(authToken.AccessToken, authToken.RefreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return err
 	}
 
@@ -176,7 +179,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			config.LOGGER.Error("could not fetch timestamp for latest sync", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.String("account_id", accountID.String()))
+			config.LOGGER.Error("could not fetch timestamp for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
 			return err
 		}
 	}
@@ -192,13 +195,13 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		fileList, err := driveService.Files.
 			List().
 			Q(query).
-			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, trashed)").
+			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum)").
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
 
 		if err != nil {
-			config.LOGGER.Error("an error occured while synching google drive files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+			config.LOGGER.Error("an error occured while synching google drive files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 			return err
 		}
 
@@ -216,6 +219,14 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 
 			previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
 
+			parentFolder := ""
+
+			if len(file.Parents) > 0 {
+				parentFolder = file.Parents[0]
+			}
+
+			isFolder := file.MimeType == "application/vnd.google-apps.folder"
+
 			files = append(files, repository.AddSyncedItemsParams{
 				AccountID:      accountID,
 				ProviderFileID: file.Id,
@@ -225,6 +236,9 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 				MimeType:       db.PGTextField(file.MimeType),
 				CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
 				ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+				ParentFolder:   db.PGTextField(parentFolder),
+				IsFolder:       isFolder,
+				ContentHash:    db.PGTextField(file.Sha256Checksum),
 				ThumbnailLink:  db.PGTextField(file.ThumbnailLink),
 				PreviewLink:    db.PGTextField(previewLink),
 				WebViewLink:    db.PGTextField(file.WebViewLink),
@@ -238,29 +252,24 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
 			qx := queries.WithTx(tx)
 
-			inserted, err := qx.AddSyncedItems(ctx, files)
+			insertedRows, err = qx.AddSyncedItems(ctx, files)
 
 			if err != nil {
 				return err
 			}
 
-			insertedRows = inserted
-
-			err = qx.UpdateLastSyncedTimestamp(ctx, accountID)
-
-			if err != nil {
-				return err
-			}
-
-			return nil
+			return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
+				SyncPageToken: db.PGTextField(""),
+				AccountID:     accountID,
+			})
 		})
 
 		if err != nil {
-			config.LOGGER.Error("failed to insert synced files", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.Error(err))
+			config.LOGGER.Error("failed to insert synced files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 			return err
 		}
 
-		config.LOGGER.Info("batch inserted", zap.String("provider", string(repository.ProviderEnumGoogle)), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
+		config.LOGGER.Info("batch inserted", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
 
 		totalItemCount += int(insertedRows)
 
@@ -269,11 +278,17 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		if pageToken == "" {
 			break
 		}
+
+		files = []repository.AddSyncedItemsParams{}
 	}
 
 	config.LOGGER.Info("Google drive sync successful", zap.Int("item_count", totalItemCount))
 
 	return nil
+}
+
+func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error) {
+	return "", nil
 }
 
 func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.Client {
