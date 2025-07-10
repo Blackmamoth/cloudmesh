@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Card, CardBody } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Link } from "@heroui/link";
@@ -8,8 +8,32 @@ import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
 
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { authClient } from "@/lib/auth-client";
+import { addToast } from "@heroui/toast";
+
+type providerName = "google" | "github";
 
 export const AuthPage = () => {
+  const [loading, setLoading] = useState(false);
+
+  const onOauthLogin = async (provider: providerName) => {
+    await authClient.signIn.social(
+      { provider: provider },
+      {
+        onRequest: () => setLoading(true),
+        onSuccess: () => setLoading(false),
+        onError: (ctx) => {
+          addToast({
+            title: `An error occured while signing you in`,
+            description: ctx.error.message,
+            color: "danger",
+          });
+          setLoading(false);
+        },
+      }
+    );
+  };
+
   return (
     <div className="min-h-screen w-full flex flex-col">
       {/* Background elements */}
@@ -61,6 +85,7 @@ export const AuthPage = () => {
                   color="primary"
                   size="lg"
                   startContent={<Icon icon="logos:google-icon" />}
+                  onPress={() => onOauthLogin("google")}
                 >
                   Sign in with Google
                 </Button>
@@ -69,6 +94,7 @@ export const AuthPage = () => {
                   color="default"
                   size="lg"
                   startContent={<Icon icon="lucide:github" />}
+                  onPress={() => onOauthLogin("github")}
                   variant="flat"
                 >
                   Sign in with GitHub

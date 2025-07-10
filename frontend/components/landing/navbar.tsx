@@ -9,8 +9,11 @@ import { Icon } from "@iconify/react";
 import { Link } from "@heroui/link";
 
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { authClient } from "@/lib/auth-client";
 
 export const Navbar = () => {
+  const { data } = authClient.useSession();
+
   return (
     <HeroNavbar className="bg-transparent" maxWidth="xl">
       <NavbarBrand>
@@ -31,14 +34,16 @@ export const Navbar = () => {
         >
           Star on GitHub
         </Button>
-        <Button
-          as={Link}
-          color="primary"
-          href="/auth"
-          startContent={<Icon icon="lucide:log-in" />}
-        >
-          Sign in with Google
-        </Button>
+        {!data?.user.id && (
+          <Button
+            as={Link}
+            color="primary"
+            href="/auth"
+            startContent={<Icon icon="lucide:log-in" />}
+          >
+            Sign in with Google
+          </Button>
+        )}
       </NavbarContent>
     </HeroNavbar>
   );

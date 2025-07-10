@@ -4,8 +4,11 @@ import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
 import { Link } from "@heroui/link";
 import { Image } from "@heroui/image";
+import { authClient } from "@/lib/auth-client";
 
 export const HeroSection = () => {
+  const { data } = authClient.useSession();
+
   return (
     <section className="py-20 md:py-32 px-4 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
@@ -24,15 +27,27 @@ export const HeroSection = () => {
             Dropbox—without switching tabs or storing anything on CloudMesh.
           </p>
           <div className="flex flex-wrap gap-4 mt-4">
-            <Button
-              as={Link}
-              color="primary"
-              href="/auth"
-              size="lg"
-              startContent={<Icon icon="lucide:log-in" />}
-            >
-              Sign in with Google
-            </Button>
+            {data?.user.id ? (
+              <Button
+                as={Link}
+                color="primary"
+                href="/dashboard"
+                size="lg"
+                startContent={<Icon icon="lucide:arrow-right" />}
+              >
+                Continue to Dashboard
+              </Button>
+            ) : (
+              <Button
+                as={Link}
+                color="primary"
+                href="/auth"
+                size="lg"
+                startContent={<Icon icon="lucide:log-in" />}
+              >
+                Sign in with Google
+              </Button>
+            )}
             <Button
               color="default"
               size="lg"
