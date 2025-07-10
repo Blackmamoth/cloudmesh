@@ -1,41 +1,55 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-.dot-pattern {
-  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.1) 1px, transparent 1px);
-  background-size: 24px 24px;
+:root {
+  font-family: "Inter", sans-serif;
 }
 
-.dark .dot-pattern {
-  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+/* Add responsive utilities */
+@layer utilities {
+  .xs\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.glass-effect {
+.glass-card {
   backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 24px -8px rgba(0, 0, 0, 0.1);
 }
 
-.gradient-text {
-  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-500 to-primary-400;
+.dark .glass-card {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 24px -8px rgba(0, 0, 0, 0.3);
 }
 
-.gradient-border {
-  position: relative;
-  border-radius: 12px;
+.gradient-bg {
+  background: radial-gradient(
+    circle at 50% 0%,
+    rgba(0, 111, 238, 0.1),
+    transparent 70%
+  );
 }
 
-.gradient-border::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: 13px;
-  background: linear-gradient(to right, rgba(42, 90, 228, 0.5), rgba(97, 186, 255, 0.5));
-  z-index: -1;
+.dark .gradient-bg {
+  background: radial-gradient(
+    circle at 50% 0%,
+    rgba(0, 111, 238, 0.15),
+    transparent 70%
+  );
 }
 
-.dark .gradient-border::before {
-  background: linear-gradient(to right, rgba(65, 119, 240, 0.5), rgba(101, 156, 245, 0.5));
+.feature-card {
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
 }
