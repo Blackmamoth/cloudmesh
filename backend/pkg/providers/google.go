@@ -175,23 +175,26 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 
 	queries := repository.New(conn)
 
-	lastSyncedAt, err := queries.GetLatestSyncTime(ctx, accountID)
+	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			config.LOGGER.Error("could not fetch timestamp for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
 			return err
 		}
 	}
 
-	if lastSyncedAt.Valid {
-		query = fmt.Sprintf("modifiedTime > '%s'", lastSyncedAt.Time.Format(time.RFC3339))
+	if syncDetails.LastSyncedAt.Valid {
+		query = fmt.Sprintf("modifiedTime > '%s'", syncDetails.LastSyncedAt.Time.Format(time.RFC3339))
 	}
 
 	var files []repository.AddSyncedItemsParams
+
 	totalItemCount := 0
 
 	for {
+		var providerFileIDs []string
+
 		fileList, err := driveService.Files.
 			List().
 			Q(query).
@@ -217,15 +220,19 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 				parsedModifiedTime = time.Time{}
 			}
 
+			isFolder := file.MimeType == "application/vnd.google-apps.folder"
+
 			previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
+
+			if isFolder {
+				previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", file.Id)
+			}
 
 			parentFolder := "/"
 
 			if len(file.Parents) > 0 {
 				parentFolder = file.Parents[0]
 			}
-
-			isFolder := file.MimeType == "application/vnd.google-apps.folder"
 
 			files = append(files, repository.AddSyncedItemsParams{
 				AccountID:      accountID,
@@ -245,12 +252,28 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 				WebContentLink: db.PGTextField(file.WebContentLink),
 				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
 			})
+
+			if syncDetails.LastSyncedAt.Valid {
+				providerFileIDs = append(providerFileIDs, file.Id)
+			}
 		}
 
 		var insertedRows int64
 
 		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
 			qx := queries.WithTx(tx)
+
+			if len(providerFileIDs) > 0 {
+				err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
+					ProviderFileIds: providerFileIDs,
+					AccountID:       accountID,
+				})
+
+				if err != nil {
+					config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+					return err
+				}
+			}
 
 			insertedRows, err = qx.AddSyncedItems(ctx, files)
 

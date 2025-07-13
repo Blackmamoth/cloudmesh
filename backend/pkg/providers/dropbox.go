@@ -3,7 +3,9 @@ package providers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -237,9 +239,26 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 
 	totalItemCount := 0
 
+	queries := repository.New(conn)
+
 	var files []repository.AddSyncedItemsParams
 
+	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
+
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+			return err
+		}
+	}
+
+	if syncDetails.LastSyncedAt.Valid && syncDetails.SyncPageToken.Valid {
+		cursor = syncDetails.SyncPageToken.String
+	}
+
 	for {
+		var providerFileIDs []string
+
 		dropboxResponse, err := p.getDropboxFolderList(authToken.AccessToken, authToken.RefreshToken, cursor)
 
 		if err != nil {
@@ -273,12 +292,28 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 				WebContentLink: db.PGTextField(""),
 				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
 			})
+
+			if syncDetails.LastSyncedAt.Valid {
+				providerFileIDs = append(providerFileIDs, entry.ID)
+			}
 		}
 
 		var insertedRows int64
 
 		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-			qx := repository.New(conn).WithTx(tx)
+			qx := queries.WithTx(tx)
+
+			if len(providerFileIDs) > 0 {
+				err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
+					ProviderFileIds: providerFileIDs,
+					AccountID:       accountID,
+				})
+
+				if err != nil {
+					config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+					return err
+				}
+			}
 
 			insertedRows, err = qx.AddSyncedItems(ctx, files)
 

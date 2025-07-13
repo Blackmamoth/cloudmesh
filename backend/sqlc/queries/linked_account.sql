@@ -8,8 +8,8 @@ INSERT INTO linked_account (
 -- name: UpdateAuthTokens :exec
 UPDATE linked_account SET access_token = @access_token, refresh_token = @refresh_token, token_type = @token_type, expiry = @expiry WHERE id = @account_id;
 
--- name: GetLatestSyncTime :one
-SELECT last_synced_at FROM linked_account WHERE id = @account_id;
+-- name: GetLatestSyncTimeAndPagetoken :one
+SELECT last_synced_at, sync_page_token FROM linked_account WHERE id = @account_id;
 
 -- name: GetAccountByProviderID :one
 SELECT id FROM linked_account WHERE user_id = @user_id AND provider = @provider AND provider_user_id = @provider_user_id LIMIT 1;

@@ -60,6 +60,26 @@ func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithF
 	return count, err
 }
 
+const deleteConflictingItems = `-- name: DeleteConflictingItems :exec
+
+
+DELETE FROM synced_items WHERE provider_file_id IN ($1::TEXT[]) AND account_id = $2
+`
+
+type DeleteConflictingItemsParams struct {
+	ProviderFileIds []string    `json:"provider_file_ids"`
+	AccountID       pgtype.UUID `json:"account_id"`
+}
+
+// -- name: GetSyncedItemsByProviderFileIDs :many
+// SELECT id FROM synced_items WHERE account_id = @account_id AND provider_file_id IN (@provider_file_ids::TEXT[]);
+// -- name: DeleteDuplicateItems :exec
+// DELETE FROM synced_items WHERE id IN (@ids::UUID[]);
+func (q *Queries) DeleteConflictingItems(ctx context.Context, arg DeleteConflictingItemsParams) error {
+	_, err := q.db.Exec(ctx, deleteConflictingItems, arg.ProviderFileIds, arg.AccountID)
+	return err
+}
+
 const getSyncedItems = `-- name: GetSyncedItems :many
 SELECT synced_items.id,
        synced_items.name,
@@ -104,7 +124,8 @@ WHERE  linked_account.user_id = $1
        CASE
            WHEN $5 = 'modified_time' AND $6 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
            ELSE NULL
-       END DESC
+       END DESC,
+       synced_items.modified_time DESC
        LIMIT $8 OFFSET $7
 `
 

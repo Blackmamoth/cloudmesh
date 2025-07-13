@@ -90,15 +90,20 @@ func (q *Queries) GetAuthTokens(ctx context.Context, arg GetAuthTokensParams) (G
 	return i, err
 }
 
-const getLatestSyncTime = `-- name: GetLatestSyncTime :one
-SELECT last_synced_at FROM linked_account WHERE id = $1
+const getLatestSyncTimeAndPagetoken = `-- name: GetLatestSyncTimeAndPagetoken :one
+SELECT last_synced_at, sync_page_token FROM linked_account WHERE id = $1
 `
 
-func (q *Queries) GetLatestSyncTime(ctx context.Context, accountID pgtype.UUID) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getLatestSyncTime, accountID)
-	var last_synced_at pgtype.Timestamptz
-	err := row.Scan(&last_synced_at)
-	return last_synced_at, err
+type GetLatestSyncTimeAndPagetokenRow struct {
+	LastSyncedAt  pgtype.Timestamptz `json:"last_synced_at"`
+	SyncPageToken pgtype.Text        `json:"sync_page_token"`
+}
+
+func (q *Queries) GetLatestSyncTimeAndPagetoken(ctx context.Context, accountID pgtype.UUID) (GetLatestSyncTimeAndPagetokenRow, error) {
+	row := q.db.QueryRow(ctx, getLatestSyncTimeAndPagetoken, accountID)
+	var i GetLatestSyncTimeAndPagetokenRow
+	err := row.Scan(&i.LastSyncedAt, &i.SyncPageToken)
+	return i, err
 }
 
 const getLatestSyncTimeByUserID = `-- name: GetLatestSyncTimeByUserID :one
