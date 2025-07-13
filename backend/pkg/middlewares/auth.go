@@ -48,7 +48,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 
 		conn, err := m.connPool.Acquire(r.Context())
 		if err != nil {
-			config.LOGGER.Error("could not acquire connection from db pool", zap.Error(err))
+			config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, ErrUnexpected)
 			return
 		}
@@ -79,16 +79,16 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 			return
 		}
 
-		userId := jwtClaims.UserID
+		userID := jwtClaims.UserID
 
-		if err := m.checkUserExists(r.Context(), conn, userId); err != nil {
+		if err := m.checkUserExists(r.Context(), conn, userID); err != nil {
 			utils.SendAPIErrorResponse(w, http.StatusUnauthorized, ErrUnauthorized)
 			return
 		}
 
 		ctx := r.Context()
 
-		ctx = context.WithValue(ctx, UserKey, userId)
+		ctx = context.WithValue(ctx, UserKey, userID)
 
 		r = r.WithContext(ctx)
 

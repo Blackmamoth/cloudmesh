@@ -19,6 +19,7 @@ import { Badge } from "@heroui/badge";
 import { Providers } from "../providers";
 
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { authClient } from "@/lib/auth-client";
 
 export default function RootLayout({
   children,
@@ -42,6 +43,8 @@ export default function RootLayout({
   };
 
   const title = navItems.find((item) => item.path === location)?.name ?? "";
+
+  const { data } = authClient.useSession();
 
   return (
     <Providers themeProps={{ attribute: "class", defaultTheme: "system" }}>
@@ -124,12 +127,13 @@ export default function RootLayout({
                     startContent={
                       <Avatar
                         size="sm"
-                        src="https://img.heroui.chat/image/avatar?w=200&h=200&u=cloudmesh1"
+                        src={data?.user.image || ""}
+                        fallback={<Icon icon="lucide:user" />}
                       />
                     }
                     variant="light"
                   >
-                    John Doe
+                    {data?.user.name}
                   </Button>
                 </DropdownTrigger>
                 <DropdownMenu aria-label="User actions">

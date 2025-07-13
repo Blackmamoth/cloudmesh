@@ -150,7 +150,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
-		config.LOGGER.Error("could not get a connection from db pool", zap.String("provider", providerName), zap.Error(err))
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.String("provider", providerName), zap.Error(err))
 		h.errorRedirect(w, r)
 		return
 	}
@@ -238,7 +238,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
 
-	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/linked-accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("%s/accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
 }
 
 func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {

@@ -38,7 +38,7 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 
 	conn, err := db.ConnPool.Acquire(ctx)
 	if err != nil {
-		config.LOGGER.Error("failed to acquire new connection from pool", zap.Error(err))
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 		return err
 	}
 	defer conn.Release()

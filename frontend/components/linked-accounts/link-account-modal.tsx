@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Modal,
   ModalContent,
@@ -10,6 +10,11 @@ import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
+import { authClient } from "@/lib/auth-client";
+import { generateOAuthState, getJWTToken } from "@/lib/utils";
+import { APIConfig } from "@/lib/env/client";
+import { useSearchParams } from "next/navigation";
+import { addToast } from "@heroui/toast";
 
 interface LinkAccountModalProps {
   isOpen: boolean;
@@ -20,6 +25,34 @@ export const LinkAccountModal: React.FC<LinkAccountModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { data } = authClient.useSession();
+
+  const searchParams = useSearchParams();
+  const hasShownToast = useRef(false);
+
+  useEffect(() => {
+    const success = searchParams.get("successQuery");
+
+    if (success && !hasShownToast.current) {
+      hasShownToast.current = true;
+
+      const description =
+        success === "newAccount"
+          ? "Your account is now connected to CloudMesh!"
+          : "That account was already connected. We’ve updated it for you.";
+
+      const url = new URL(window.location.href);
+      url.searchParams.delete("successQuery");
+      window.history.replaceState({}, "", url.toString());
+
+      addToast({
+        title: "Account linked successfully",
+        description,
+        color: "success",
+      });
+    }
+  }, [searchParams]);
+
   const providers = [
     {
       id: "google",
@@ -56,18 +89,8 @@ export const LinkAccountModal: React.FC<LinkAccountModalProps> = ({
   ];
 
   const handleProviderSelect = (providerId: string) => {
-    console.log(`Initiating OAuth flow for ${providerId}`);
-
-    // For demonstration purposes, simulate a random error 30% of the time
-    if (Math.random() < 0.3) {
-      // In a real app, this would be handled by the OAuth callback route
-      window.location.href = `/link-error?provider=${providerId}&error=Access was denied by the provider or the authentication flow was interrupted.`;
-
-      return;
-    }
-
-    // Implementation would go here - OAuth flow
-    onClose();
+    const state = generateOAuthState(data?.user.id!);
+    document.location.href = `${APIConfig.API_URL}/api/v1/link/${providerId}?state=${encodeURIComponent(state)}`;
   };
 
   return (

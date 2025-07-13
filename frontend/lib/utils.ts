@@ -1,5 +1,22 @@
 import { FileType } from "./types";
 
+export const getJWTToken = async (token: string) => {
+  const response = await fetch("/api/auth/token", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const body = await response.json();
+
+  console.log(body.token);
+  return body.token;
+};
+
+export const generateOAuthState = (userID: string) => {
+  return btoa(JSON.stringify({ user_id: userID, nonce: crypto.randomUUID() }));
+};
+
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return "0 Bytes";
 

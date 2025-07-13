@@ -219,7 +219,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 
 			previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
 
-			parentFolder := ""
+			parentFolder := "/"
 
 			if len(file.Parents) > 0 {
 				parentFolder = file.Parents[0]

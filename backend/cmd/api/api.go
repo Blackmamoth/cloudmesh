@@ -7,6 +7,7 @@ import (
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/handlers"
+	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -54,7 +55,7 @@ func (s *APIServer) Run() error {
 		})
 	})
 
-	r.Mount("/v1/api", s.registerRoutes())
+	r.Mount("/api/v1", s.registerRoutes())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		utils.SendAPIErrorResponse(
@@ -84,10 +85,20 @@ func (s *APIServer) Run() error {
 func (s *APIServer) registerRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
+	authMiddleware := middlewares.NewAuthMiddleware(s.connPool)
+
 	linkHandler := handlers.NewLinkHandler(s.connPool)
+	accountHandler := handlers.NewAccountHandler(s.connPool, authMiddleware)
+	filesHandler := handlers.NewFilesHandler(s.connPool, authMiddleware)
 
 	r.Mount("/link", linkHandler.RegisterRoutes())
-	config.LOGGER.Info("Mounted link handler")
+	config.LOGGER.Info("Mounted /link routes")
+
+	r.Mount("/account", accountHandler.RegisterRoutes())
+	config.LOGGER.Info("Mounted /account routes")
+
+	r.Mount("/files", filesHandler.RegisterRoutes())
+	config.LOGGER.Info("Mounted /files routes")
 
 	return r
 }

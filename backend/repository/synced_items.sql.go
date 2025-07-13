@@ -6,6 +6,8 @@
 package repository
 
 import (
+	"context"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -26,4 +28,150 @@ type AddSyncedItemsParams struct {
 	WebViewLink    pgtype.Text        `json:"web_view_link"`
 	WebContentLink pgtype.Text        `json:"web_content_link"`
 	LinkExpiresAt  pgtype.Timestamptz `json:"link_expires_at"`
+}
+
+const countFilesWithFilters = `-- name: CountFilesWithFilters :one
+SELECT COUNT(*)
+FROM   synced_items
+       JOIN linked_account
+       ON linked_account.id = synced_items.account_id
+WHERE  linked_account.user_id = $1
+       AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
+       AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
+       AND (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
+`
+
+type CountFilesWithFiltersParams struct {
+	UserID       string      `json:"user_id"`
+	ParentFolder interface{} `json:"parent_folder"`
+	Provider     interface{} `json:"provider"`
+	Search       interface{} `json:"search"`
+}
+
+func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithFiltersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countFilesWithFilters,
+		arg.UserID,
+		arg.ParentFolder,
+		arg.Provider,
+		arg.Search,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getSyncedItems = `-- name: GetSyncedItems :many
+SELECT synced_items.id,
+       synced_items.name,
+       synced_items.size,
+       synced_items.is_folder,
+       synced_items.thumbnail_link,
+       synced_items.preview_link,
+       synced_items.web_view_link,
+       synced_items.web_content_link,
+       synced_items.modified_time,
+       linked_account.name AS account_name,
+       linked_account.avatar_url,
+       linked_account.provider
+FROM   synced_items
+       JOIN linked_account
+       ON linked_account.id = synced_items.account_id
+WHERE  linked_account.user_id = $1
+       AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
+       AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
+       AND (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
+       ORDER BY 
+       CASE
+           WHEN $5 = 'file_name' AND $6 = 'asc' THEN synced_items.name
+           ELSE NULL -- Explicitly return NULL when not sorting by this
+       END ASC,
+       CASE
+           WHEN $5 = 'file_name' AND $6 = 'desc' THEN synced_items.name
+           ELSE NULL
+       END DESC,
+       CASE
+           WHEN $5 = 'size' AND $6 = 'asc' THEN synced_items.size
+           ELSE NULL
+       END ASC,
+       CASE
+           WHEN $5 = 'size' AND $6 = 'desc' THEN synced_items.size
+           ELSE NULL
+       END DESC,
+       CASE
+           WHEN $5 = 'modified_time' AND $6 = 'asc' THEN synced_items.modified_time::TIMESTAMPTZ
+           ELSE NULL
+       END ASC,
+       CASE
+           WHEN $5 = 'modified_time' AND $6 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
+           ELSE NULL
+       END DESC
+       LIMIT $8 OFFSET $7
+`
+
+type GetSyncedItemsParams struct {
+	UserID       string      `json:"user_id"`
+	ParentFolder interface{} `json:"parent_folder"`
+	Provider     interface{} `json:"provider"`
+	Search       interface{} `json:"search"`
+	SortOn       interface{} `json:"sort_on"`
+	SortBy       interface{} `json:"sort_by"`
+	OffsetBy     int32       `json:"offset_by"`
+	LimitBy      int32       `json:"limit_by"`
+}
+
+type GetSyncedItemsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	Name           string             `json:"name"`
+	Size           int64              `json:"size"`
+	IsFolder       bool               `json:"is_folder"`
+	ThumbnailLink  pgtype.Text        `json:"thumbnail_link"`
+	PreviewLink    pgtype.Text        `json:"preview_link"`
+	WebViewLink    pgtype.Text        `json:"web_view_link"`
+	WebContentLink pgtype.Text        `json:"web_content_link"`
+	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
+	AccountName    string             `json:"account_name"`
+	AvatarUrl      pgtype.Text        `json:"avatar_url"`
+	Provider       ProviderEnum       `json:"provider"`
+}
+
+func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) ([]GetSyncedItemsRow, error) {
+	rows, err := q.db.Query(ctx, getSyncedItems,
+		arg.UserID,
+		arg.ParentFolder,
+		arg.Provider,
+		arg.Search,
+		arg.SortOn,
+		arg.SortBy,
+		arg.OffsetBy,
+		arg.LimitBy,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetSyncedItemsRow{}
+	for rows.Next() {
+		var i GetSyncedItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Size,
+			&i.IsFolder,
+			&i.ThumbnailLink,
+			&i.PreviewLink,
+			&i.WebViewLink,
+			&i.WebContentLink,
+			&i.ModifiedTime,
+			&i.AccountName,
+			&i.AvatarUrl,
+			&i.Provider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

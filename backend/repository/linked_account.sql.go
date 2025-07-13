@@ -101,6 +101,55 @@ func (q *Queries) GetLatestSyncTime(ctx context.Context, accountID pgtype.UUID) 
 	return last_synced_at, err
 }
 
+const getLatestSyncTimeByUserID = `-- name: GetLatestSyncTimeByUserID :one
+SELECT last_synced_at FROM linked_account WHERE user_id = $1 ORDER BY last_synced_at DESC
+`
+
+func (q *Queries) GetLatestSyncTimeByUserID(ctx context.Context, userID string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getLatestSyncTimeByUserID, userID)
+	var last_synced_at pgtype.Timestamptz
+	err := row.Scan(&last_synced_at)
+	return last_synced_at, err
+}
+
+const getLinkedAccountsByUserID = `-- name: GetLinkedAccountsByUserID :many
+SELECT provider, name, email, avatar_url, last_synced_at FROM linked_account WHERE user_id = $1
+`
+
+type GetLinkedAccountsByUserIDRow struct {
+	Provider     ProviderEnum       `json:"provider"`
+	Name         string             `json:"name"`
+	Email        string             `json:"email"`
+	AvatarUrl    pgtype.Text        `json:"avatar_url"`
+	LastSyncedAt pgtype.Timestamptz `json:"last_synced_at"`
+}
+
+func (q *Queries) GetLinkedAccountsByUserID(ctx context.Context, userID string) ([]GetLinkedAccountsByUserIDRow, error) {
+	rows, err := q.db.Query(ctx, getLinkedAccountsByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetLinkedAccountsByUserIDRow{}
+	for rows.Next() {
+		var i GetLinkedAccountsByUserIDRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.Name,
+			&i.Email,
+			&i.AvatarUrl,
+			&i.LastSyncedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAuthTokens = `-- name: UpdateAuthTokens :exec
 UPDATE linked_account SET access_token = $1, refresh_token = $2, token_type = $3, expiry = $4 WHERE id = $5
 `

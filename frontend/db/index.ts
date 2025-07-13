@@ -1,4 +1,4 @@
-import { PostgreSQLConfig } from "@/lib/env";
+import { PostgreSQLConfig } from "@/lib/env/server";
 import "dotenv/config";
 import { drizzle } from "drizzle-orm/node-postgres";
 

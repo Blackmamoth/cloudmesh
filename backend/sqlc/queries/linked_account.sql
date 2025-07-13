@@ -20,3 +20,9 @@ user_id = @user_id AND id = @account_id;
 
 -- name: UpdateLastSyncedTimestamp :exec
 UPDATE linked_account SET last_synced_at = NOW(), sync_page_token = @sync_page_token WHERE id = @account_id;
+
+-- name: GetLinkedAccountsByUserID :many
+SELECT provider, name, email, avatar_url, last_synced_at FROM linked_account WHERE user_id = @user_id;
+
+-- name: GetLatestSyncTimeByUserID :one
+SELECT last_synced_at FROM linked_account WHERE user_id = @user_id ORDER BY last_synced_at DESC;
