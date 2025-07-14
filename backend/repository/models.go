@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type JobStatusEnum string
+
+const (
+	JobStatusEnumQueued     JobStatusEnum = "queued"
+	JobStatusEnumProcessing JobStatusEnum = "processing"
+	JobStatusEnumSucceeded  JobStatusEnum = "succeeded"
+	JobStatusEnumFailed     JobStatusEnum = "failed"
+	JobStatusEnumRetrying   JobStatusEnum = "retrying"
+)
+
+func (e *JobStatusEnum) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = JobStatusEnum(s)
+	case string:
+		*e = JobStatusEnum(s)
+	default:
+		return fmt.Errorf("unsupported scan type for JobStatusEnum: %T", src)
+	}
+	return nil
+}
+
+type NullJobStatusEnum struct {
+	JobStatusEnum JobStatusEnum `json:"job_status_enum"`
+	Valid         bool          `json:"valid"` // Valid is true if JobStatusEnum is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullJobStatusEnum) Scan(value interface{}) error {
+	if value == nil {
+		ns.JobStatusEnum, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.JobStatusEnum.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullJobStatusEnum) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.JobStatusEnum), nil
+}
+
 type ProviderEnum string
 
 const (
@@ -73,6 +118,22 @@ type DrizzleDrizzleMigration struct {
 	ID        int32       `json:"id"`
 	Hash      string      `json:"hash"`
 	CreatedAt pgtype.Int8 `json:"created_at"`
+}
+
+type JobLog struct {
+	ID         pgtype.UUID        `json:"id"`
+	JobID      string             `json:"job_id"`
+	AccountID  pgtype.UUID        `json:"account_id"`
+	Type       string             `json:"type"`
+	Status     JobStatusEnum      `json:"status"`
+	Queue      string             `json:"queue"`
+	Params     []byte             `json:"params"`
+	Error      pgtype.Text        `json:"error"`
+	Retries    pgtype.Int4        `json:"retries"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Jwk struct {

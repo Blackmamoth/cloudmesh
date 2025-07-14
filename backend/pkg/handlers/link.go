@@ -20,6 +20,7 @@ import (
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/sessions"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -226,24 +227,13 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		successQuery = "existingAccount"
 	}
 
-	asynqclient := db.GetAsynqClient()
+	asynqClient := db.GetAsynqClient()
 
-	task, err := tasks.NewFileSyncTask(userId, accountID)
-
-	if err != nil {
-		config.LOGGER.Error("failed to create new file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+	if err = h.enqueueFileSyncTaskAndLog(r.Context(), userId, accountID, providerName, asynqClient, queries); err != nil {
+		config.LOGGER.Error("enqueueFileSyncTaskAndLog failed", zap.Error(err))
 		h.errorRedirect(w, r)
 		return
 	}
-
-	info, err := asynqclient.Enqueue(task)
-	if err != nil {
-		config.LOGGER.Error("failed to enqueue file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
-		h.errorRedirect(w, r)
-		return
-	}
-
-	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
 
 	http.Redirect(w, r, fmt.Sprintf("%s/accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
 }
@@ -270,6 +260,55 @@ func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
 
 	if delErr := db.RedisClient.Del(ctx, key).Err(); delErr != nil {
 		config.LOGGER.Warn("failed to delete used nonce", zap.Error(delErr))
+	}
+
+	return nil
+}
+
+func (h *LinkHandler) enqueueFileSyncTaskAndLog(
+	ctx context.Context,
+	userId, accountID, providerName string,
+	asynqClient *asynq.Client,
+	queries *repository.Queries,
+) error {
+	task, err := tasks.NewFileSyncTask(userId, accountID)
+	if err != nil {
+		config.LOGGER.Error("failed to create file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		return err
+	}
+
+	info, err := asynqClient.Enqueue(task, asynq.MaxRetry(3))
+	if err != nil {
+		config.LOGGER.Error("failed to enqueue file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		return err
+	}
+
+	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
+
+	params, err := json.Marshal(tasks.FileSyncPayload{UserID: userId, AccountID: accountID})
+	if err != nil {
+		config.LOGGER.Error("failed to marshal file sync task params", zap.String("provider", providerName), zap.Error(err))
+		return nil
+	}
+
+	accountUUID, err := db.PGUUID(accountID)
+	if err != nil {
+		config.LOGGER.Error("invalid accountID UUID format", zap.String("provider", providerName), zap.String("accountID", accountID), zap.Error(err))
+		return nil
+	}
+
+	err = queries.AddNewJobLog(ctx, repository.AddNewJobLogParams{
+		JobID:     info.ID,
+		AccountID: *accountUUID,
+		Type:      info.Type,
+		Status:    repository.JobStatusEnumQueued,
+		Queue:     info.Queue,
+		Params:    params,
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert job log", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue), zap.Error(err))
+		return err
 	}
 
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
@@ -31,19 +32,44 @@ func NewFileSyncTask(userID, accountID string) (*asynq.Task, error) {
 }
 
 func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
+
 	var p FileSyncPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		return fmt.Errorf("file to unmarshal task payload: %v: %w", err, asynq.SkipRetry)
+		return fmt.Errorf("file to unmarshal task payload: %v", err)
 	}
 
 	conn, err := db.ConnPool.Acquire(ctx)
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to acquire new connection from connection pool: %v", err)
 	}
 	defer conn.Release()
 
 	queries := repository.New(conn)
+
+	jobID := t.ResultWriter().TaskID()
+
+	retryCount, ok := asynq.GetRetryCount(ctx)
+
+	if !ok || retryCount == 0 {
+		err = queries.UpdateJobLogStart(ctx, repository.UpdateJobLogStartParams{
+			StartedAt: db.PGTimestamptzField(time.Now()),
+			JobID:     jobID,
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to insert start log for job", zap.String("job_id", jobID), zap.Error(err))
+		}
+	} else {
+		err = queries.UpdateJobLogRetryCount(ctx, repository.UpdateJobLogRetryCountParams{
+			Retries: db.PGInt4Field(int32(retryCount)),
+			JobID:   jobID,
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to insert retry count log for job", zap.String("job_id", jobID), zap.Int("retry_count", retryCount), zap.Error(err))
+		}
+	}
 
 	accountID, err := db.PGUUID(p.AccountID)
 
@@ -59,7 +85,7 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 
 	if err != nil {
 		config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err), zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
-		return fmt.Errorf("failed to fetch auth tokens from db")
+		return fmt.Errorf("failed to fetch auth tokens from db: %v", err)
 	}
 
 	provider, ok := providers.OAuthProviders[string(authToken.Provider)]
@@ -71,7 +97,26 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 	err = provider.SyncFiles(ctx, conn, *accountID, authToken)
 
 	if err != nil {
+
+		dbErr := queries.UpdateJobLogFailed(ctx, repository.UpdateJobLogFailedParams{
+			Error: db.PGTextField(err.Error()),
+			JobID: jobID,
+		})
+
+		if dbErr != nil {
+			config.LOGGER.Error("failed to insert failed log for job", zap.String("job_id", jobID), zap.Error(err))
+		}
+
 		return err
+	}
+
+	err = queries.UpdateJobLogFinish(ctx, repository.UpdateJobLogFinishParams{
+		FinishedAt: db.PGTimestamptzField(time.Now()),
+		JobID:      jobID,
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert finish log for job", zap.String("job_id", jobID), zap.Error(err))
 	}
 
 	config.LOGGER.Info("worker completed synching files to the db", zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))

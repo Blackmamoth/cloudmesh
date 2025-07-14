@@ -104,3 +104,7 @@ func PGUUID(val string) (*pgtype.UUID, error) {
 
 	return &pgUUID, nil
 }
+
+func PGInt4Field(val int32) pgtype.Int4 {
+	return pgtype.Int4{Int32: val, Valid: true}
+}
