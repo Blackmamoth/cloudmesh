@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -105,6 +107,11 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if oauthState.UserID == "" {
+		h.errorRedirect(w, r)
+		return
+	}
+
+	if err = h.validateNonce(r.Context(), oauthState.Nonce); err != nil {
 		h.errorRedirect(w, r)
 		return
 	}
@@ -243,4 +250,27 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("%s/error", config.APIConfig.FRONTEND_HOST), http.StatusFound)
+}
+
+func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
+	key := fmt.Sprintf("link-nonce:%s", nonce)
+	val, err := db.RedisClient.Get(ctx, key).Result()
+
+	if err != nil {
+		if err == redis.Nil {
+			return fmt.Errorf("nonce not found or expired")
+		}
+		config.LOGGER.Error("error querying redis for nonce", zap.Error(err))
+		return err
+	}
+
+	if val != nonce {
+		return fmt.Errorf("nonce mismatch")
+	}
+
+	if delErr := db.RedisClient.Del(ctx, key).Err(); delErr != nil {
+		config.LOGGER.Warn("failed to delete used nonce", zap.Error(delErr))
+	}
+
+	return nil
 }

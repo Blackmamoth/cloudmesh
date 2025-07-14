@@ -14,5 +14,13 @@ const OAuthSchema = z.object({
   GITHUB_CALLBACK_URL: z.string(),
 });
 
+const RedisSchema = z.object({
+  REDIS_HOST: z.string(),
+  REDIS_PASS: z.string(),
+  REDIS_PORT: z.coerce.number(),
+  REDIS_DB: z.coerce.number(),
+});
+
 export const PostgreSQLConfig = PostgreSQLSchema.parse(process.env);
 export const OAuthConfig = OAuthSchema.parse(process.env);
+export const RedisConfig = RedisSchema.parse(process.env);

@@ -1,3 +1,4 @@
+import { redisClient } from "./redis";
 import { FileType } from "./types";
 
 export const getJWTToken = async (token: string) => {
@@ -8,13 +9,14 @@ export const getJWTToken = async (token: string) => {
   });
 
   const body = await response.json();
-
-  console.log(body.token);
   return body.token;
 };
 
-export const generateOAuthState = (userID: string) => {
-  return btoa(JSON.stringify({ user_id: userID, nonce: crypto.randomUUID() }));
+export const generateOAuthState = async (userID: string) => {
+  const response = await fetch("/api/get-nonce");
+  const body = await response.json();
+  const nonce = body.nonce;
+  return btoa(JSON.stringify({ user_id: userID, nonce }));
 };
 
 export const formatFileSize = (bytes: number): string => {

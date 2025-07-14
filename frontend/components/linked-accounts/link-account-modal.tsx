@@ -88,8 +88,8 @@ export const LinkAccountModal: React.FC<LinkAccountModalProps> = ({
     },
   ];
 
-  const handleProviderSelect = (providerId: string) => {
-    const state = generateOAuthState(data?.user.id!);
+  const handleProviderSelect = async (providerId: string) => {
+    const state = await generateOAuthState(data?.user.id!);
     document.location.href = `${APIConfig.API_URL}/api/v1/link/${providerId}?state=${encodeURIComponent(state)}`;
   };
 
