@@ -64,4 +64,4 @@ WHERE  linked_account.user_id = @user_id
        AND (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%');
 
 -- name: DeleteConflictingItems :exec
-DELETE FROM synced_items WHERE provider_file_id IN (@provider_file_ids::TEXT[]) AND account_id = @account_id;
+DELETE FROM synced_items WHERE provider_file_id = ANY(@provider_file_ids::TEXT[]) AND account_id = @account_id;

@@ -61,7 +61,7 @@ func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithF
 }
 
 const deleteConflictingItems = `-- name: DeleteConflictingItems :exec
-DELETE FROM synced_items WHERE provider_file_id IN ($1::TEXT[]) AND account_id = $2
+DELETE FROM synced_items WHERE provider_file_id = ANY($1::TEXT[]) AND account_id = $2
 `
 
 type DeleteConflictingItemsParams struct {

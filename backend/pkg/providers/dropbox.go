@@ -271,7 +271,7 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 	for {
 		var providerFileIDs []string
 
-		dropboxResponse, err := p.getDropboxFolderList(accessToken, refreshToken, cursor)
+		dropboxResponse, err := p.getDropboxFolderList(ctx, accountID, conn, accessToken, refreshToken, cursor)
 
 		if err != nil {
 			config.LOGGER.Error("request failed to fetch dropbox folder list", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
@@ -362,7 +362,7 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 	return nil
 }
 
-func (p *DropboxProvider) getDropboxFolderList(accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
+func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
 	dropboxApiURL := DROPBOX_LIST_FOLDER_URL
 	reqBody := []byte(`{"path": "", "recursive": true}`)
 
@@ -396,8 +396,14 @@ func (p *DropboxProvider) getDropboxFolderList(accessToken, refreshToken, cursor
 	}
 
 	if res.StatusCode == http.StatusUnauthorized {
-		config.LOGGER.Error("http request for dropbox sync task return 401", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
-		return nil, fmt.Errorf("%s", string(body[:]))
+		config.LOGGER.Warn("access token expired, attempting to renew", zap.String("provider", DROPBOX_PROVIDER_NAME))
+
+		_, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+		if err != nil {
+			return nil, err
+		}
+
+		return nil, fmt.Errorf("request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request")
 	}
 
 	if res.StatusCode != http.StatusOK {
@@ -445,14 +451,20 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	expiresIn := time.Now().Add(time.Duration(dropboxResponse.ExpiresIn) * time.Second)
 
 	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+		encryptedAccessToken, err := utils.Encrypt(dropboxResponse.AccessToken)
+		if err != nil {
+			config.LOGGER.Error("failed to encrypt new access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			return err
+		}
+
 		qx := repository.New(conn).WithTx(tx)
 
 		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
-			AccountID:    accountID,
-			AccessToken:  dropboxResponse.AccessToken,
-			RefreshToken: "",
-			TokenType:    db.PGTextField(dropboxResponse.TokenType),
-			Expiry:       db.PGTimestamptzField(expiresIn),
+			AccountID:   accountID,
+			AccessToken: encryptedAccessToken,
+			TokenType:   db.PGTextField(dropboxResponse.TokenType),
+			Expiry:      db.PGTimestamptzField(expiresIn),
 		})
 
 		return err

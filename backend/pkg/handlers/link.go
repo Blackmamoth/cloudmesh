@@ -222,8 +222,8 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 			qx := queries.WithTx(tx)
 
 			err := qx.UpdateAuthTokens(r.Context(), repository.UpdateAuthTokensParams{
-				AccessToken:  token.AccessToken,
-				RefreshToken: token.RefreshToken,
+				AccessToken:  encryptedAccessToken,
+				RefreshToken: encryptedRefreshToken,
 				TokenType:    db.PGTextField(token.TokenType),
 				Expiry:       db.PGTimestamptzField(token.Expiry),
 				AccountID:    existingAccountID,

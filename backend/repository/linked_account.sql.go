@@ -156,7 +156,7 @@ func (q *Queries) GetLinkedAccountsByUserID(ctx context.Context, userID string) 
 }
 
 const updateAuthTokens = `-- name: UpdateAuthTokens :exec
-UPDATE linked_account SET access_token = $1, refresh_token = $2, token_type = $3, expiry = $4 WHERE id = $5
+UPDATE linked_account SET access_token = $1, refresh_token = $2, token_type = $3, expiry = $4, updated_at = NOW() WHERE id = $5
 `
 
 type UpdateAuthTokensParams struct {

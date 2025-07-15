@@ -3,8 +3,10 @@ package providers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	oauth2Google "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/option"
 )
@@ -32,7 +35,14 @@ type GoogleProvider struct {
 const (
 	GOOGLE_SESSION_NAME  = "cloudmesh-google-oauth-session"
 	GOOGLE_PROVIDER_NAME = string(repository.ProviderEnumGoogle)
+	GOOGLE_AUTH_URL      = "https://oauth2.googleapis.com/token"
 )
+
+type GoogleAuthResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	IDToken     string `json:"id_token"`
+}
 
 func NewGoogleProvider() *GoogleProvider {
 	return &GoogleProvider{
@@ -52,13 +62,13 @@ func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reques
 
 	encodedState, oauthState, err := GenerateOauthState(userID)
 	if err != nil {
-		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
 	session, err := store.Get(r, GOOGLE_SESSION_NAME)
 	if err != nil {
-		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -67,7 +77,7 @@ func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Reques
 
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return "", err
 	}
 
@@ -90,7 +100,7 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 
 	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
 	if err != nil {
-		config.LOGGER.Error("failed to decode received state", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to decode received state", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, fmt.Errorf("failed to decode received state")
 	}
 
@@ -117,12 +127,12 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 	delete(session.Values, "oauth_csrf_token_google")
 	err = session.Save(r, w)
 	if err != nil {
-		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 	}
 
 	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
 	if err != nil {
-		config.LOGGER.Error("token exchange failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("token exchange failed", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return nil, "", nil, err
 	}
 
@@ -138,18 +148,18 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 	httpClient := p.getHTTPClient(token.AccessToken, token.RefreshToken)
 	svc, err := oauth2Google.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return nil, fmt.Errorf("failed to create oauth2 service")
 	}
 
 	userInfo, err := svc.Userinfo.Get().Do()
 	if err != nil {
-		config.LOGGER.Error("failed to fetch user info", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to fetch user info", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 		return nil, fmt.Errorf("failed to fetch user info")
 	}
 
 	userAccountInfo := UserAccountInfo{
-		Provider:       DROPBOX_PROVIDER_NAME,
+		Provider:       GOOGLE_PROVIDER_NAME,
 		ProviderUserID: userInfo.Id,
 		Email:          userInfo.Email,
 		Name:           userInfo.Name,
@@ -216,6 +226,25 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 			Do()
 
 		if err != nil {
+			if gErr, ok := err.(*googleapi.Error); ok {
+				if gErr.Code == http.StatusUnauthorized {
+					newAccessToken, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+
+					if err != nil {
+						return err
+					}
+
+					httpClient = p.getHTTPClient(newAccessToken, refreshToken)
+					driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
+					if err != nil {
+						config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+						return err
+					}
+
+					continue
+				}
+			}
+
 			config.LOGGER.Error("an error occured while synching google drive files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
 			return err
 		}
@@ -323,7 +352,54 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 }
 
 func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error) {
-	return "", nil
+	reqUrl := fmt.Sprintf("%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s", GOOGLE_AUTH_URL, p.Config.ClientID, p.Config.ClientSecret, refreshToken)
+
+	res, err := http.Post(reqUrl, "application/json", nil)
+	if err != nil {
+		config.LOGGER.Error("http request for google token renewal failed", zap.String("provider", GOOGLE_PROVIDER_NAME))
+		return "", err
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for google token renewal", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return "", err
+	}
+
+	defer res.Body.Close()
+
+	var googleAuthResponse GoogleAuthResponse
+
+	if err := json.Unmarshal(body, &googleAuthResponse); err != nil {
+		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return "", err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+		encryptedAccessToken, err := utils.Encrypt(googleAuthResponse.AccessToken)
+		if err != nil {
+			config.LOGGER.Error("failed to encrypt new access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+			return err
+		}
+
+		qx := repository.New(conn).WithTx(tx)
+
+		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+			AccountID:   accountID,
+			AccessToken: encryptedAccessToken,
+			TokenType:   db.PGTextField(googleAuthResponse.TokenType),
+		})
+
+		return err
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to update google oauth tokens in db", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return "", err
+	}
+
+	return googleAuthResponse.AccessToken, nil
 }
 
 func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.Client {
