@@ -247,7 +247,7 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
 			return err
 		}
 	}
@@ -256,10 +256,22 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 		cursor = syncDetails.SyncPageToken.String
 	}
 
+	accessToken, err := utils.Decrypt(authToken.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
 	for {
 		var providerFileIDs []string
 
-		dropboxResponse, err := p.getDropboxFolderList(authToken.AccessToken, authToken.RefreshToken, cursor)
+		dropboxResponse, err := p.getDropboxFolderList(accessToken, refreshToken, cursor)
 
 		if err != nil {
 			config.LOGGER.Error("request failed to fetch dropbox folder list", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))

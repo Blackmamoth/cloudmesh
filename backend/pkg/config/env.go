@@ -14,6 +14,10 @@ type APIConfiguration struct {
 	FRONTEND_HOST string `envconfig:"FRONTEND_HOST" required:"true"`
 }
 
+type AESConfiguration struct {
+	MASTER_KEY string `envconfig:"AES_MASTER_KEY"   required:"true"`
+}
+
 type PostgresConfiguration struct {
 	USER                     string `envconfig:"POSTGRES_USER"                     required:"true"`
 	PASSWORD                 string `envconfig:"POSTGRES_PASSWORD"                 required:"true"`
@@ -58,6 +62,7 @@ type CookieStoreConfiguration struct {
 
 var (
 	APIConfig         APIConfiguration
+	AESConfig         AESConfiguration
 	PostgresConfig    PostgresConfiguration
 	RedisConfig       RedisConfiguration
 	OAuthConfig       OAuthConfiguration
@@ -72,6 +77,10 @@ func loadEnv() {
 	godotenv.Load()
 
 	if err := envconfig.Process("", &APIConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
+	if err := envconfig.Process("AES_", &AESConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
 

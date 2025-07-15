@@ -161,7 +161,19 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 
 func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
 
-	httpClient := p.getHTTPClient(authToken.AccessToken, authToken.RefreshToken)
+	accessToken, err := utils.Decrypt(authToken.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
+	httpClient := p.getHTTPClient(accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {

@@ -143,12 +143,26 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	encryptedAccessToken, err := utils.Encrypt(token.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to encrypt access token", zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
+	encryptedRefreshToken, err := utils.Encrypt(token.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to encrypt access token", zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
 	addCountParams := repository.AddAccountDetailsParams{
 		UserID:         userId,
 		Provider:       repository.ProviderEnum(providerName),
 		ProviderUserID: accountInfo.ProviderUserID,
-		AccessToken:    token.AccessToken,
-		RefreshToken:   token.RefreshToken,
+		AccessToken:    encryptedAccessToken,
+		RefreshToken:   encryptedRefreshToken,
 		TokenType:      db.PGTextField(token.TokenType),
 		Expiry:         db.PGTimestamptzField(token.Expiry),
 		Email:          accountInfo.Email,
