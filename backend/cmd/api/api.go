@@ -86,10 +86,11 @@ func (s *APIServer) registerRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
 	authMiddleware := middlewares.NewAuthMiddleware(s.connPool)
+	fileMiddleware := middlewares.NewFileMiddleware()
 
 	linkHandler := handlers.NewLinkHandler(s.connPool)
 	accountHandler := handlers.NewAccountHandler(s.connPool, authMiddleware)
-	filesHandler := handlers.NewFilesHandler(s.connPool, authMiddleware)
+	filesHandler := handlers.NewFilesHandler(s.connPool, authMiddleware, fileMiddleware)
 
 	r.Mount("/link", linkHandler.RegisterRoutes())
 	config.LOGGER.Info("Mounted /link routes")

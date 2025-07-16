@@ -13,6 +13,7 @@ import (
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
+	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
@@ -411,4 +412,45 @@ func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.C
 	reusableTokenSource := oauth2.ReuseTokenSource(token, tokenSource)
 
 	return oauth2.NewClient(context.Background(), reusableTokenSource)
+}
+
+func (p *GoogleProvider) UploadFiles(ctx context.Context, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	httpClient := p.getHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	for _, f := range uploadedFiles {
+		mimeType := f.ContentType
+
+		fileMetaData := &drive.File{
+			Name: f.FileHeader.Filename,
+		}
+
+		_, err := driveService.Files.Create(fileMetaData).Media(f.File, googleapi.ContentType(mimeType)).Do()
+
+		if err != nil {
+			config.LOGGER.Error("failed to upload file to google drive", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+			return fmt.Errorf("upload failed for file '%s': %v", f.FileHeader.Filename, err)
+		}
+
+	}
+
+	return nil
 }

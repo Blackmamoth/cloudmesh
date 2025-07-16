@@ -18,6 +18,7 @@ import (
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
+	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
@@ -476,4 +477,8 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	}
 
 	return dropboxResponse.AccessToken, int64(dropboxResponse.ExpiresIn), nil
+}
+
+func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+	return nil
 }
