@@ -1,6 +1,7 @@
+"use client";
 import React from "react";
 import { Icon } from "@iconify/react";
-import { Switch } from "@heroui/switch";
+import { Button } from "@heroui/button";
 import { Tooltip } from "@heroui/tooltip";
 import { useTheme } from "next-themes";
 
@@ -13,21 +14,21 @@ export const ThemeSwitcher = () => {
   };
 
   return (
-    <Tooltip
-      content={`Switch to ${isDark ? "light" : "dark"} mode`}
-      placement="bottom"
-    >
-      <div className="flex items-center gap-2">
-        <Switch
-          className="mx-1"
-          color="primary"
-          endContent={<Icon className="text-lg" icon="lucide:moon" />}
-          isSelected={isDark}
-          size="sm"
-          startContent={<Icon className="text-lg" icon="lucide:sun" />}
-          onValueChange={handleToggle}
+    <Tooltip content={`Switch to ${isDark ? "light" : "dark"} mode`}>
+      <Button
+        isIconOnly
+        variant="flat"
+        size="sm"
+        className="absolute right-4 top-4"
+        onPress={handleToggle}
+        aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
+      >
+        <Icon
+          icon={isDark ? "lucide:sun" : "lucide:moon"}
+          width={20}
+          height={20}
         />
-      </div>
+      </Button>
     </Tooltip>
   );
 };

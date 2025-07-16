@@ -7,21 +7,24 @@ import { Link } from "@heroui/link";
 import { Icon } from "@iconify/react";
 import { motion } from "framer-motion";
 
-import { ThemeSwitcher } from "@/components/theme-switcher";
 import { authClient } from "@/lib/auth-client";
 import { addToast } from "@heroui/toast";
+import { useRouter } from "next/navigation";
 
 type providerName = "google" | "github";
 
 export const AuthPage = () => {
   const [loading, setLoading] = useState(false);
-
+  const router = useRouter();
   const onOauthLogin = async (provider: providerName) => {
     await authClient.signIn.social(
       { provider: provider },
       {
         onRequest: () => setLoading(true),
-        onSuccess: () => setLoading(false),
+        onSuccess: () => {
+          setLoading(false);
+          router.push("/dashboard");
+        },
         onError: (ctx) => {
           addToast({
             title: `An error occured while signing you in`,
@@ -45,11 +48,6 @@ export const AuthPage = () => {
         {/* Abstract background shapes */}
         <div className="absolute top-[10%] left-[15%] w-[30vw] h-[30vw] max-w-[400px] max-h-[400px] rounded-full bg-primary-200/20 dark:bg-primary-800/10 blur-3xl" />
         <div className="absolute bottom-[20%] right-[10%] w-[25vw] h-[25vw] max-w-[350px] max-h-[350px] rounded-full bg-primary-200/20 dark:bg-primary-800/10 blur-3xl" />
-      </div>
-
-      {/* Theme switcher */}
-      <div className="fixed top-4 right-4 z-10">
-        <ThemeSwitcher />
       </div>
 
       {/* Logo */}

@@ -15,7 +15,7 @@ import {
 import { Avatar } from "@heroui/avatar";
 import { Navbar, NavbarBrand, NavbarContent } from "@heroui/navbar";
 import { Badge } from "@heroui/badge";
-
+import { useRouter } from "next/navigation";
 import { Providers } from "../providers";
 
 import { ThemeSwitcher } from "@/components/theme-switcher";
@@ -28,7 +28,7 @@ export default function RootLayout({
 }) {
   const location = usePathname();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
+  const router = useRouter();
   const navItems = [
     { name: "Dashboard", icon: "lucide:layout-dashboard", path: "/dashboard" },
     { name: "Files", icon: "lucide:folder", path: "/files" },
@@ -176,6 +176,10 @@ export default function RootLayout({
                     className="text-danger"
                     color="danger"
                     startContent={<Icon icon="lucide:log-out" />}
+                    onPress={async () => {
+                      await authClient.signOut();
+                      router.push("/")                      
+                    }}
                   >
                     Logout
                   </DropdownItem>
