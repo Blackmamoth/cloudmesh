@@ -21,7 +21,6 @@ export const ThemeSwitcher = () => {
         size="sm"
         className="absolute right-4 top-4"
         onPress={handleToggle}
-        aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
       >
         <Icon
           icon={isDark ? "lucide:sun" : "lucide:moon"}
