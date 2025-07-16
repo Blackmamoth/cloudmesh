@@ -383,42 +383,24 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
 
           {/* Bulk actions (only shown when files are selected) */}
           {selectedCount > 0 && (
-            <Dropdown>
-              <DropdownTrigger>
-                <Button
-                  color="primary"
-                  startContent={<Icon icon="lucide:check-square" />}
-                  variant="flat"
-                >
-                  {selectedCount} Selected
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu aria-label="Bulk actions">
-                <DropdownItem
-                  key="download"
-                  startContent={<Icon icon="lucide:download" />}
-                  onPress={() => onBulkAction("download")}
-                >
-                  Download
-                </DropdownItem>
-                <DropdownItem
-                  key="share"
-                  startContent={<Icon icon="lucide:share" />}
-                  onPress={() => onBulkAction("share")}
-                >
-                  Share
-                </DropdownItem>
-                <DropdownItem
-                  key="delete"
-                  className="text-danger"
-                  color="danger"
-                  startContent={<Icon icon="lucide:trash" />}
-                  onPress={() => onBulkAction("delete")}
-                >
-                  Delete
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
+            <div className="flex items-center gap-2">
+              <Button
+                color="primary"
+                startContent={<Icon icon="lucide:download" />}
+                variant="flat"
+                onPress={() => onBulkAction("download")}
+              >
+                Download
+              </Button>
+              <Button
+                color="danger"
+                startContent={<Icon icon="lucide:trash" />}
+                variant="flat"
+                onPress={() => onBulkAction("delete")}
+              >
+                Delete
+              </Button>
+            </div>
           )}
         </div>
       </div>
