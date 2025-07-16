@@ -221,7 +221,7 @@ export const FileTable: React.FC<FileTableProps> = ({
               <TableCell>{formatDate(file.modifiedAt)}</TableCell>
               <TableCell>
                 <Dropdown>
-                  <DropdownTrigger>
+                  <DropdownTrigger asChild>
                     <Button isIconOnly size="sm" variant="light">
                       <Icon icon="lucide:more-horizontal" />
                     </Button>

@@ -99,16 +99,17 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
               {/* Selection checkbox - consistently positioned top-right */}
               <div
-                className="absolute top-2 right-2"
+                className="absolute top-2 right-2 z-10"
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleFileSelection(file.id);
+                  e.preventDefault();
                 }}
               >
                 <Checkbox
                   aria-label={`Select ${file.name}`}
-                  className="bg-background/80 rounded-md"
+                  className="bg-background/80 backdrop-blur-sm rounded-md p-1"
                   isSelected={selectedFiles.includes(file.id)}
+                  onChange={() => toggleFileSelection(file.id)}
                 />
               </div>
             </div>
@@ -121,7 +122,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               </p>
             </div>
             <Dropdown>
-              <DropdownTrigger>
+              <DropdownTrigger asChild>
                 <Button isIconOnly size="sm" variant="light">
                   <Icon icon="lucide:more-horizontal" />
                 </Button>

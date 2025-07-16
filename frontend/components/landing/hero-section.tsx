@@ -23,7 +23,7 @@ export const HeroSection = () => {
             <span className="text-primary">One clean dashboard.</span>
           </h1>
           <p className="text-lg md:text-xl text-foreground-600 max-w-xl">
-            Search, browse, and manage files across Google Drive and
+            Search, browse, and manage files across Google Drive, OneDrive, and
             Dropbox—without switching tabs or storing anything on CloudMesh.
           </p>
           <div className="flex flex-wrap gap-4 mt-4">

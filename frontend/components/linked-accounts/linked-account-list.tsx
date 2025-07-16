@@ -251,7 +251,7 @@ export const LinkedAccountsList = () => {
                               </Badge>
 
                               <Dropdown>
-                                <DropdownTrigger>
+                                <DropdownTrigger asChild>
                                   <Button isIconOnly size="sm" variant="light">
                                     <Icon icon="lucide:more-vertical" />
                                   </Button>

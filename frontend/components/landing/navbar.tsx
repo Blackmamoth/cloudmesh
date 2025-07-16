@@ -3,6 +3,7 @@ import {
   Navbar as HeroNavbar,
   NavbarBrand,
   NavbarContent,
+  NavbarItem,
 } from "@heroui/navbar";
 import { Button } from "@heroui/button";
 import { Icon } from "@iconify/react";
@@ -23,7 +24,6 @@ export const Navbar = () => {
         </div>
       </NavbarBrand>
       <NavbarContent justify="end">
-        <ThemeSwitcher />
         <Button
           as={Link}
           color="default"
@@ -41,9 +41,12 @@ export const Navbar = () => {
             href="/auth"
             startContent={<Icon icon="lucide:log-in" />}
           >
-            Sign in with Google
+            Sign in
           </Button>
         )}
+        <NavbarItem className="ml-7">
+          <ThemeSwitcher />
+        </NavbarItem>
       </NavbarContent>
     </HeroNavbar>
   );
