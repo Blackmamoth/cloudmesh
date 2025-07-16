@@ -119,6 +119,14 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 		config.LOGGER.Error("failed to insert finish log for job", zap.String("job_id", jobID), zap.Error(err))
 	}
 
+	newTask, err := NewFileSyncTask(p.UserID, p.AccountID)
+
+	if err == nil {
+		asynqclient := db.GetAsynqClient()
+
+		asynqclient.Enqueue(newTask, asynq.ProcessAt(time.Now().Add(30*time.Minute)), asynq.Unique(6*time.Minute))
+	}
+
 	config.LOGGER.Info("worker completed synching files to the db", zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
 	return nil
 }
