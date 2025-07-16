@@ -249,6 +249,12 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if err = h.enqueueAuthTokenRenewalTaskAndLog(r.Context(), userId, accountID, providerName, time.Duration(token.ExpiresIn), asynqClient, queries); err != nil {
+		config.LOGGER.Error("enqueueAuthTokenRenewalTaskAndLog failed", zap.Error(err))
+		h.errorRedirect(w, r)
+		return
+	}
+
 	http.Redirect(w, r, fmt.Sprintf("%s/accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
 }
 
@@ -322,6 +328,56 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 
 	if err != nil {
 		config.LOGGER.Error("failed to insert job log", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue), zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
+	ctx context.Context,
+	userId, accountID, providerName string,
+	expiresIn time.Duration,
+	asynqClient *asynq.Client,
+	queries *repository.Queries,
+) error {
+	task, err := tasks.NewAuthTokenRenewalTask(userId, accountID)
+	if err != nil {
+		config.LOGGER.Error("failed to create auth token renewal task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.Error(err))
+		return err
+	}
+
+	info, err := asynqClient.Enqueue(task, asynq.MaxRetry(3), asynq.ProcessIn(expiresIn))
+	if err != nil {
+		config.LOGGER.Error("failed to enqueue auth token renewal task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.Error(err))
+		return err
+	}
+
+	config.LOGGER.Info("auth token renewal task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
+
+	params, err := json.Marshal(tasks.AuthTokenRenewalPayload{UserID: userId, AccountID: accountID})
+	if err != nil {
+		config.LOGGER.Error("failed to marshal auth token renewal task params", zap.String("provider", providerName), zap.Error(err))
+		return nil
+	}
+
+	accountUUID, err := db.PGUUID(accountID)
+	if err != nil {
+		config.LOGGER.Error("invalid accountID UUID format", zap.String("provider", providerName), zap.String("accountID", accountID), zap.Error(err))
+		return nil
+	}
+
+	err = queries.AddNewJobLog(ctx, repository.AddNewJobLogParams{
+		JobID:     info.ID,
+		AccountID: *accountUUID,
+		Type:      info.Type,
+		Status:    repository.JobStatusEnumQueued,
+		Queue:     info.Queue,
+		Params:    params,
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert job log", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.String("task_id", info.ID), zap.String("queue", info.Queue), zap.Error(err))
 		return err
 	}
 

@@ -398,7 +398,7 @@ func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pg
 	if res.StatusCode == http.StatusUnauthorized {
 		config.LOGGER.Warn("access token expired, attempting to renew", zap.String("provider", DROPBOX_PROVIDER_NAME))
 
-		_, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+		_, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
 		if err != nil {
 			return nil, err
 		}
@@ -418,7 +418,7 @@ func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pg
 	return &dropboxResponse, err
 }
 
-func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error) {
+func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
 	data := url.Values{}
 
 	data.Add("grant_type", "refresh_token")
@@ -429,14 +429,14 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	res, err := http.Post(DROPBOX_AUTH_URL, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		config.LOGGER.Error("http request for dropbox token renewal failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
-		return "", err
+		return "", 0, err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		config.LOGGER.Error("failed to read http response body for dropbox token renewal", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
-		return "", err
+		return "", 0, err
 	}
 
 	var dropboxResponse DropboxAuthResponse
@@ -445,7 +445,7 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 
 	if err != nil {
 		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return "", err
+		return "", 0, err
 	}
 
 	expiresIn := time.Now().Add(time.Duration(dropboxResponse.ExpiresIn) * time.Second)
@@ -472,8 +472,8 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 
 	if err != nil {
 		config.LOGGER.Error("failed to update dropbox oauth tokens in db", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return "", err
+		return "", 0, err
 	}
 
-	return dropboxResponse.AccessToken, nil
+	return dropboxResponse.AccessToken, int64(dropboxResponse.ExpiresIn), nil
 }

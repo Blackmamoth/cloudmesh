@@ -41,6 +41,7 @@ const (
 type GoogleAuthResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
 	IDToken     string `json:"id_token"`
 }
 
@@ -228,7 +229,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		if err != nil {
 			if gErr, ok := err.(*googleapi.Error); ok {
 				if gErr.Code == http.StatusUnauthorized {
-					newAccessToken, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+					newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
 
 					if err != nil {
 						return err
@@ -351,19 +352,19 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 	return nil
 }
 
-func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, error) {
+func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
 	reqUrl := fmt.Sprintf("%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s", GOOGLE_AUTH_URL, p.Config.ClientID, p.Config.ClientSecret, refreshToken)
 
 	res, err := http.Post(reqUrl, "application/json", nil)
 	if err != nil {
 		config.LOGGER.Error("http request for google token renewal failed", zap.String("provider", GOOGLE_PROVIDER_NAME))
-		return "", err
+		return "", 0, err
 	}
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		config.LOGGER.Error("failed to read http response body for google token renewal", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
-		return "", err
+		return "", 0, err
 	}
 
 	defer res.Body.Close()
@@ -372,7 +373,7 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 
 	if err := json.Unmarshal(body, &googleAuthResponse); err != nil {
 		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return "", err
+		return "", 0, err
 	}
 
 	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
@@ -396,10 +397,10 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 
 	if err != nil {
 		config.LOGGER.Error("failed to update google oauth tokens in db", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return "", err
+		return "", 0, err
 	}
 
-	return googleAuthResponse.AccessToken, nil
+	return googleAuthResponse.AccessToken, googleAuthResponse.ExpiresIn, nil
 }
 
 func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.Client {
