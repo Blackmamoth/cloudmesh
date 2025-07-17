@@ -9,13 +9,11 @@ import { motion } from "framer-motion";
 
 import { authClient } from "@/lib/auth-client";
 import { addToast } from "@heroui/toast";
-import { useRouter } from "next/navigation";
 
 type providerName = "google" | "github";
 
 export const AuthPage = () => {
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
   const onOauthLogin = async (provider: providerName) => {
     await authClient.signIn.social(
       { provider: provider },
@@ -23,7 +21,6 @@ export const AuthPage = () => {
         onRequest: () => setLoading(true),
         onSuccess: () => {
           setLoading(false);
-          router.push("/dashboard");
         },
         onError: (ctx) => {
           addToast({
