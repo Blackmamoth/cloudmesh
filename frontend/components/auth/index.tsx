@@ -108,22 +108,6 @@ export const AuthPage = () => {
               </div>
             </CardBody>
           </Card>
-
-          <div className="flex justify-center mt-6">
-            <Button
-              as={Link}
-              color="default"
-              href="https://github.com/cloudmesh"
-              size="sm"
-              startContent={
-                <Icon className="text-foreground-500" icon="lucide:star" />
-              }
-              target="_blank"
-              variant="light"
-            >
-              Star on GitHub
-            </Button>
-          </div>
         </motion.div>
       </div>
     </div>
