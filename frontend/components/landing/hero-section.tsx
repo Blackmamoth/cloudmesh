@@ -20,7 +20,7 @@ export const HeroSection = () => {
         >
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold leading-tight">
             All your cloud files. <br />
-            <span className="text-primary">One clean dashboard.</span>
+            <span className="text-primary whitespace-nowrap">One clean dashboard.</span>
           </h1>
           <p className="text-lg md:text-xl text-foreground-600 max-w-xl">
             Search, browse, and manage files across Google Drive, OneDrive, and
@@ -45,17 +45,9 @@ export const HeroSection = () => {
                 size="lg"
                 startContent={<Icon icon="lucide:log-in" />}
               >
-                Sign in with Google
+                Sign in with CloudMesh
               </Button>
             )}
-            <Button
-              color="default"
-              size="lg"
-              startContent={<Icon icon="lucide:github" />}
-              variant="flat"
-            >
-              Star us on GitHub
-            </Button>
           </div>
         </motion.div>
         <motion.div
