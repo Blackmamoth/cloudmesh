@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -23,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 	oauth2Google "google.golang.org/api/oauth2/v2"
@@ -436,21 +438,51 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, authTokens repository.
 		return err
 	}
 
+	var (
+		mu      sync.Mutex
+		results []*drive.File
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
 	for _, f := range uploadedFiles {
-		mimeType := f.ContentType
+		file := f
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		fileMetaData := &drive.File{
-			Name: f.FileHeader.Filename,
-		}
+			uploadedFile, err := p.uploadToDrive(driveService, file)
+			if err != nil {
+				return err
+			}
 
-		_, err := driveService.Files.Create(fileMetaData).Media(f.File, googleapi.ContentType(mimeType)).Do()
+			mu.Lock()
+			results = append(results, uploadedFile)
+			mu.Unlock()
 
-		if err != nil {
-			config.LOGGER.Error("failed to upload file to google drive", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-			return fmt.Errorf("upload failed for file '%s': %v", f.FileHeader.Filename, err)
-		}
-
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	fmt.Println(results[0].Name)
+
 	return nil
+}
+
+func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.UploadedFile) (*drive.File, error) {
+	mimeType := file.ContentType
+
+	fileMeta := &drive.File{Name: file.FileHeader.Filename}
+
+	uploadedFile, err := service.Files.Create(fileMeta).Media(file.File, googleapi.ContentType(mimeType)).Do()
+	if err != nil {
+		config.LOGGER.Error("upload failed", zap.String("file", file.FileHeader.Filename), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, fmt.Errorf("upload failed for file '%s': %v", file.FileHeader.Filename, err)
+	}
+
+	return uploadedFile, nil
 }

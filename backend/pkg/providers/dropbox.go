@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
+	"golang.org/x/sync/errgroup"
 )
 
 type DropboxProvider struct {
@@ -86,6 +87,7 @@ const (
 	DROPBOX_AUTH_URL        = "https://api.dropboxapi.com/oauth2/token"
 	DROPBOX_ACCOUNT_URL     = "https://api.dropboxapi.com/2/users/get_current_account"
 	DROPBOX_LIST_FOLDER_URL = "https://api.dropboxapi.com/2/files/list_folder"
+	DROPBOX_UPLOAD_URL      = "https://content.dropboxapi.com/2/files/upload"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -480,5 +482,79 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 }
 
 func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	var (
+		g, _ = errgroup.WithContext(ctx)
+		sem  = make(chan struct{}, 10)
+	)
+
+	for _, f := range uploadedFiles {
+		file := f
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			err = p.uploadToDropbox(accessToken, file)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) error {
+	dropboxArgs := map[string]any{
+		"path":            fmt.Sprintf("/%s", file.FileHeader.Filename),
+		"mode":            "add",
+		"autorename":      false,
+		"mute":            false,
+		"strict_conflict": false,
+	}
+
+	argJSON, err := json.Marshal(dropboxArgs)
+
+	if err != nil {
+		config.LOGGER.Error("failed to marshal dropbox args", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest("POST", DROPBOX_UPLOAD_URL, file.File)
+	if err != nil {
+		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accesstoken))
+	req.Header.Set("Dropbox-API-Arg", string(argJSON))
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Int("status_code", resp.StatusCode))
+		return fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
+	}
+
 	return nil
 }
