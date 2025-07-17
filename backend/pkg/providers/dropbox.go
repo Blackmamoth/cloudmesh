@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -58,6 +59,18 @@ type DropboxAccountInfo struct {
 type DropboxListFolderEntries struct {
 	ID             string    `json:"id"`
 	Tag            string    `json:".tag"`
+	Name           string    `json:"name"`
+	PathDisplay    string    `json:"path_display"`
+	PathLower      string    `json:"path_lower"`
+	ClientModified time.Time `json:"client_modified"`
+	ServerModified time.Time `json:"server_modified"`
+	ContentHash    string    `json:"content_hash"`
+	Revision       string    `json:"rev"`
+	Size           int       `json:"size"`
+}
+
+type DropboxUploadResponse struct {
+	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	PathDisplay    string    `json:"path_display"`
 	PathLower      string    `json:"path_lower"`
@@ -481,7 +494,7 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	return dropboxResponse.AccessToken, int64(dropboxResponse.ExpiresIn), nil
 }
 
-func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
 		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
@@ -489,8 +502,10 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository
 	}
 
 	var (
-		g, _ = errgroup.WithContext(ctx)
-		sem  = make(chan struct{}, 10)
+		mu      sync.Mutex
+		results []*DropboxUploadResponse
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
 	)
 
 	for _, f := range uploadedFiles {
@@ -499,10 +514,14 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			err = p.uploadToDropbox(accessToken, file)
+			uploadedFile, err := p.uploadToDropbox(accessToken, file)
 			if err != nil {
 				return err
 			}
+
+			mu.Lock()
+			results = append(results, uploadedFile)
+			mu.Unlock()
 
 			return nil
 		})
@@ -512,10 +531,59 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, authTokens repository
 		return err
 	}
 
+	var files []repository.AddSyncedItemsParams
+
+	for _, r := range results {
+
+		ext := filepath.Ext(r.Name)
+
+		mimeType := mime.TypeByExtension(ext)
+
+		parentFolder := path.Dir(r.PathDisplay)
+
+		files = append(files, repository.AddSyncedItemsParams{
+			AccountID:      *accountID,
+			ProviderFileID: r.ID,
+			Name:           r.Name,
+			Extension:      ext,
+			Size:           int64(r.Size),
+			MimeType:       db.PGTextField(mimeType),
+			ParentFolder:   db.PGTextField(parentFolder),
+			IsFolder:       false,
+			ContentHash:    db.PGTextField(r.ContentHash),
+			CreatedTime:    db.PGTimestamptzField(time.Time{}),
+			ModifiedTime:   db.PGTimestamptzField(r.ClientModified),
+			ThumbnailLink:  db.PGTextField(""),
+			PreviewLink:    db.PGTextField(""),
+			WebViewLink:    db.PGTextField(""),
+			WebContentLink: db.PGTextField(""),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+		})
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+
+		config.LOGGER.Info("insert new files", zap.Int64("item_count", insertedRows))
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
 	return nil
 }
 
-func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) error {
+func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) (*DropboxUploadResponse, error) {
 	dropboxArgs := map[string]any{
 		"path":            fmt.Sprintf("/%s", file.FileHeader.Filename),
 		"mode":            "add",
@@ -528,7 +596,7 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 
 	if err != nil {
 		config.LOGGER.Error("failed to marshal dropbox args", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return err
+		return nil, err
 	}
 
 	httpClient := http.Client{}
@@ -536,25 +604,40 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 	req, err := http.NewRequest("POST", DROPBOX_UPLOAD_URL, file.File)
 	if err != nil {
 		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
-		return err
+		return nil, err
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accesstoken))
 	req.Header.Set("Dropbox-API-Arg", string(argJSON))
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := httpClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
-		return err
+		return nil, err
 	}
 
-	defer resp.Body.Close()
+	defer res.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox file upload", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
 	}
 
-	return nil
+	if res.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Int("status_code", res.StatusCode))
+		return nil, fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
+	}
+
+	var response DropboxUploadResponse
+
+	err = json.Unmarshal(body, &response)
+
+	if err != nil {
+		config.LOGGER.Error("failed to unmarshal json response for dropbox file upload response", zap.Error(err))
+		return nil, err
+	}
+
+	return &response, nil
 }

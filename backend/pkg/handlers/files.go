@@ -225,7 +225,7 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err = provider.UploadFiles(r.Context(), authTokens, uploadedFiles)
+	err = provider.UploadFiles(r.Context(), accountID, conn, queries, authTokens, uploadedFiles)
 
 	if err != nil {
 		config.LOGGER.Error("failed to upload files", zap.Error(err), zap.String("user_id", userID), zap.String("account_id", accountID.String()))

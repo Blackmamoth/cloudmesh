@@ -416,7 +416,7 @@ func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.C
 	return oauth2.NewClient(context.Background(), reusableTokenSource)
 }
 
-func (p *GoogleProvider) UploadFiles(ctx context.Context, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
 
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
@@ -468,7 +468,72 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, authTokens repository.
 		return err
 	}
 
-	fmt.Println(results[0].Name)
+	var files []repository.AddSyncedItemsParams
+
+	for _, r := range results {
+
+		parsedCreatedTime, err := time.Parse(time.RFC3339, r.CreatedTime)
+		if err != nil {
+			parsedCreatedTime = time.Time{}
+		}
+
+		parsedModifiedTime, err := time.Parse(time.RFC3339, r.ModifiedTime)
+		if err != nil {
+			parsedModifiedTime = time.Time{}
+		}
+
+		isFolder := r.MimeType == "application/vnd.google-apps.folder"
+
+		previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", r.Id)
+
+		if isFolder {
+			previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", r.Id)
+		}
+
+		parentFolder := "/"
+
+		if len(r.Parents) > 0 {
+			parentFolder = r.Parents[0]
+		}
+
+		files = append(files, repository.AddSyncedItemsParams{
+			AccountID:      *accountID,
+			ProviderFileID: r.Id,
+			Name:           r.Name,
+			Extension:      r.FullFileExtension,
+			Size:           r.Size,
+			MimeType:       db.PGTextField(r.MimeType),
+			ParentFolder:   db.PGTextField(parentFolder),
+			IsFolder:       isFolder,
+			ContentHash:    db.PGTextField(r.Sha256Checksum),
+			ThumbnailLink:  db.PGTextField(r.ThumbnailLink),
+			PreviewLink:    db.PGTextField(previewLink),
+			WebViewLink:    db.PGTextField(r.WebViewLink),
+			WebContentLink: db.PGTextField(r.WebContentLink),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
+			ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+		})
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+
+		config.LOGGER.Info("insert new files", zap.Int64("item_count", insertedRows))
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
 
 	return nil
 }
