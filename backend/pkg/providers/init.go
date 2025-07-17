@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
@@ -30,6 +31,7 @@ type Provider interface {
 	GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error)
 	SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error
 	RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error)
+	UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error
 }
 
 type OAuthState struct {

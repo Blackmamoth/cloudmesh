@@ -191,3 +191,24 @@ func (q *Queries) UpdateLastSyncedTimestamp(ctx context.Context, arg UpdateLastS
 	_, err := q.db.Exec(ctx, updateLastSyncedTimestamp, arg.SyncPageToken, arg.AccountID)
 	return err
 }
+
+const updateRenewedAuthToken = `-- name: UpdateRenewedAuthToken :exec
+UPDATE linked_account SET access_token = $1, token_type = $2, expiry = $3, updated_at = NOW() WHERE id = $4
+`
+
+type UpdateRenewedAuthTokenParams struct {
+	AccessToken string             `json:"access_token"`
+	TokenType   pgtype.Text        `json:"token_type"`
+	Expiry      pgtype.Timestamptz `json:"expiry"`
+	AccountID   pgtype.UUID        `json:"account_id"`
+}
+
+func (q *Queries) UpdateRenewedAuthToken(ctx context.Context, arg UpdateRenewedAuthTokenParams) error {
+	_, err := q.db.Exec(ctx, updateRenewedAuthToken,
+		arg.AccessToken,
+		arg.TokenType,
+		arg.Expiry,
+		arg.AccountID,
+	)
+	return err
+}

@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
+	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
@@ -22,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 	oauth2Google "google.golang.org/api/oauth2/v2"
@@ -386,7 +389,7 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 
 		qx := repository.New(conn).WithTx(tx)
 
-		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+		err = qx.UpdateRenewedAuthToken(ctx, repository.UpdateRenewedAuthTokenParams{
 			AccountID:   accountID,
 			AccessToken: encryptedAccessToken,
 			TokenType:   db.PGTextField(googleAuthResponse.TokenType),
@@ -411,4 +414,140 @@ func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.C
 	reusableTokenSource := oauth2.ReuseTokenSource(token, tokenSource)
 
 	return oauth2.NewClient(context.Background(), reusableTokenSource)
+}
+
+func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	httpClient := p.getHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	var (
+		mu      sync.Mutex
+		results []*drive.File
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range uploadedFiles {
+		file := f
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			uploadedFile, err := p.uploadToDrive(driveService, file)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			results = append(results, uploadedFile)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	var files []repository.AddSyncedItemsParams
+
+	for _, r := range results {
+
+		parsedCreatedTime, err := time.Parse(time.RFC3339, r.CreatedTime)
+		if err != nil {
+			parsedCreatedTime = time.Time{}
+		}
+
+		parsedModifiedTime, err := time.Parse(time.RFC3339, r.ModifiedTime)
+		if err != nil {
+			parsedModifiedTime = time.Time{}
+		}
+
+		isFolder := r.MimeType == "application/vnd.google-apps.folder"
+
+		previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", r.Id)
+
+		if isFolder {
+			previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", r.Id)
+		}
+
+		parentFolder := "/"
+
+		if len(r.Parents) > 0 {
+			parentFolder = r.Parents[0]
+		}
+
+		files = append(files, repository.AddSyncedItemsParams{
+			AccountID:      *accountID,
+			ProviderFileID: r.Id,
+			Name:           r.Name,
+			Extension:      r.FullFileExtension,
+			Size:           r.Size,
+			MimeType:       db.PGTextField(r.MimeType),
+			ParentFolder:   db.PGTextField(parentFolder),
+			IsFolder:       isFolder,
+			ContentHash:    db.PGTextField(r.Sha256Checksum),
+			ThumbnailLink:  db.PGTextField(r.ThumbnailLink),
+			PreviewLink:    db.PGTextField(previewLink),
+			WebViewLink:    db.PGTextField(r.WebViewLink),
+			WebContentLink: db.PGTextField(r.WebContentLink),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
+			ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+		})
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+
+		config.LOGGER.Info("insert new files", zap.Int64("item_count", insertedRows))
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.UploadedFile) (*drive.File, error) {
+	mimeType := file.ContentType
+
+	fileMeta := &drive.File{Name: file.FileHeader.Filename}
+
+	uploadedFile, err := service.Files.Create(fileMeta).Media(file.File, googleapi.ContentType(mimeType)).Do()
+	if err != nil {
+		config.LOGGER.Error("upload failed", zap.String("file", file.FileHeader.Filename), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, fmt.Errorf("upload failed for file '%s': %v", file.FileHeader.Filename, err)
+	}
+
+	return uploadedFile, nil
 }

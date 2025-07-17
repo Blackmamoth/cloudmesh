@@ -40,6 +40,11 @@ type RedisConfiguration struct {
 	DB   int    `envconfig:"REDIS_DB"                   default:"0"`
 }
 
+type AsynqConfiguration struct {
+	CONCURRENCY        int `envconfig:"ASYNQ_CONCURRENCY" default:"10"`
+	FILE_SYNC_INTERVAL int `envconfig:"ASYNQ_FILE_SYNC_INTERVAL" default:"30"`
+}
+
 type OAuthConfiguration struct {
 	GOOGLE struct {
 		CLIENT_ID     string `envconfig:"GOOGLE_ID" required:"true"`
@@ -67,6 +72,7 @@ var (
 	RedisConfig       RedisConfiguration
 	OAuthConfig       OAuthConfiguration
 	CookieStoreConfig CookieStoreConfiguration
+	AsynqConfig       AsynqConfiguration
 )
 
 func init() {
@@ -89,6 +95,10 @@ func loadEnv() {
 	}
 
 	if err := envconfig.Process("REDIS_", &RedisConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
+	if err := envconfig.Process("ASYNQ_", &AsynqConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
 

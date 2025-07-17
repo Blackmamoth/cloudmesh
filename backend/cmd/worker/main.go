@@ -14,7 +14,7 @@ func main() {
 	redisAddr := fmt.Sprintf("%s:%s", config.RedisConfig.HOST, config.RedisConfig.PORT)
 
 	srv := asynq.NewServer(asynq.RedisClientOpt{Addr: redisAddr, Password: config.RedisConfig.PASS}, asynq.Config{
-		Concurrency: 10,
+		Concurrency: config.AsynqConfig.CONCURRENCY,
 		Queues: map[string]int{
 			"critical": 6,
 			"default":  3,

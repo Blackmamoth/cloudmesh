@@ -20,9 +20,9 @@ type AuthMiddleware struct {
 	connPool *pgxpool.Pool
 }
 
-type UserKeyType string
+type userKey struct{}
 
-var UserKey UserKeyType = "user_id"
+var UserKey userKey = userKey{}
 
 var (
 	ErrNoToken      = errors.New("unauthorized, no token")

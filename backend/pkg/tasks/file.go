@@ -124,7 +124,9 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 	if err == nil {
 		asynqclient := db.GetAsynqClient()
 
-		asynqclient.Enqueue(newTask, asynq.ProcessAt(time.Now().Add(30*time.Minute)), asynq.Unique(6*time.Minute))
+		processAt := time.Now().Add(time.Duration(config.AsynqConfig.FILE_SYNC_INTERVAL) * time.Minute)
+
+		asynqclient.Enqueue(newTask, asynq.ProcessAt(processAt), asynq.Unique(6*time.Minute))
 	}
 
 	config.LOGGER.Info("worker completed synching files to the db", zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
