@@ -5,7 +5,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
-  const protectedRoutes = ['/dashboard', '/files', '/accounts', '/settings'];
+  const protectedRoutes = ['/dashboard', '/files', '/accounts', '/settings', '/api/get-nonce'];
 
   // Check if the current path is a protected route
   const isProtectedRoute = protectedRoutes.some(route => 
@@ -30,6 +30,7 @@ export const config = {
   matcher: [
     '/dashboard/:path*',
     '/profile/:path*',
-    '/settings/:path*'
+    '/settings/:path*',
+    '/api/get-nonce'
   ]
 };
