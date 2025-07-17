@@ -461,7 +461,7 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 
 		qx := repository.New(conn).WithTx(tx)
 
-		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+		err = qx.UpdateRenewedAuthToken(ctx, repository.UpdateRenewedAuthTokenParams{
 			AccountID:   accountID,
 			AccessToken: encryptedAccessToken,
 			TokenType:   db.PGTextField(dropboxResponse.TokenType),

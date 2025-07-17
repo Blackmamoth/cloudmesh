@@ -387,7 +387,7 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 
 		qx := repository.New(conn).WithTx(tx)
 
-		err = qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+		err = qx.UpdateRenewedAuthToken(ctx, repository.UpdateRenewedAuthTokenParams{
 			AccountID:   accountID,
 			AccessToken: encryptedAccessToken,
 			TokenType:   db.PGTextField(googleAuthResponse.TokenType),

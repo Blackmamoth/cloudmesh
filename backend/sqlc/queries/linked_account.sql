@@ -8,6 +8,9 @@ INSERT INTO linked_account (
 -- name: UpdateAuthTokens :exec
 UPDATE linked_account SET access_token = @access_token, refresh_token = @refresh_token, token_type = @token_type, expiry = @expiry, updated_at = NOW() WHERE id = @account_id;
 
+-- name: UpdateRenewedAuthToken :exec
+UPDATE linked_account SET access_token = @access_token, token_type = @token_type, expiry = @expiry, updated_at = NOW() WHERE id = @account_id;
+
 -- name: GetLatestSyncTimeAndPagetoken :one
 SELECT last_synced_at, sync_page_token FROM linked_account WHERE id = @account_id;
 
