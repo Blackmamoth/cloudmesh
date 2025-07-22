@@ -11,7 +11,6 @@ const syncHealthData = [
   {
     provider: "Google Drive",
     icon: "logos:google-drive",
-    successRate: 98,
     lastSync: "2023-07-15T14:30:00",
     status: "healthy",
     issues: [],
@@ -19,7 +18,6 @@ const syncHealthData = [
   {
     provider: "Dropbox",
     icon: "logos:dropbox",
-    successRate: 87,
     lastSync: "2023-07-14T09:45:00",
     status: "warning",
     issues: ["3 files failed to sync due to permission issues"],
@@ -27,7 +25,6 @@ const syncHealthData = [
   {
     provider: "OneDrive",
     icon: "logos:microsoft-onedrive",
-    successRate: 100,
     lastSync: "2023-07-15T08:30:00",
     status: "healthy",
     issues: [],
@@ -84,13 +81,6 @@ export const SyncHealthCard = () => {
     }
   };
 
-  // Get success rate color
-  const getSuccessRateColor = (rate: number) => {
-    if (rate >= 95) return "success";
-    if (rate >= 80) return "warning";
-
-    return "danger";
-  };
 
   return (
     <motion.div
@@ -144,32 +134,13 @@ export const SyncHealthCard = () => {
                 </div>
 
                 <div className="flex items-center gap-4">
-                  <Tooltip
-                    content={
-                      <div className="px-2 py-1">
-                        <p className="text-xs">
-                          Success rate over the last 7 days
-                        </p>
-                      </div>
-                    }
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">Success Rate:</span>
-                      <Badge
-                        color={getSuccessRateColor(provider.successRate)}
-                        variant="flat"
-                      >
-                        {provider.successRate}%
-                      </Badge>
-                    </div>
-                  </Tooltip>
-
                   <Button
-                    isIconOnly
                     size="sm"
                     startContent={<Icon icon="lucide:refresh-cw" />}
                     variant="flat"
-                  />
+                  >
+                    Sync Now
+                  </Button>
                 </div>
               </div>
             ))}
