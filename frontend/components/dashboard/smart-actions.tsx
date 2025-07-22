@@ -11,7 +11,6 @@ import { Chip } from "@heroui/chip";
 import { addToast } from "@heroui/toast";
 
 import { authClient } from "@/lib/auth-client";
-import { APIConfig } from "@/lib/env/client";
 import { mockAccounts } from "@/components/linked-accounts/mock-data";
 
 // Mock data for smart actions
@@ -171,55 +170,31 @@ export const SmartActionsCard = () => {
     setIsUploading(true);
 
     try {
-      // Get JWT token for backend authentication
-      const tokenResponse = await fetch("/api/auth/token", {
-        headers: {
-          Authorization: `Bearer ${session.session.token}`,
-        },
-      });
-
-      if (!tokenResponse.ok) {
-        throw new Error("Failed to get authentication token");
-      }
-
-      const tokenData = await tokenResponse.json();
-      const jwtToken = tokenData.token;
-
-      // Create FormData for multipart upload
-      const formData = new FormData();
-      formData.append('account_id', selectedAccount);
-      
-      selectedFiles.forEach(file => {
-        formData.append('files', file);
-      });
-
       // Update progress to show uploading
       setUploadProgress(prev => 
         prev.map(item => ({ ...item, status: 'uploading' as const, progress: 0 }))
       );
 
-      // Make upload request
-      const uploadResponse = await fetch(`${APIConfig.API_URL}/api/v1/files/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${jwtToken}`,
-        },
-        body: formData,
-      });
-
-      if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json();
-        throw new Error(errorData.error?.message || 'Upload failed');
+      // Simulate upload progress
+      const totalFiles = selectedFiles.length;
+      for (let i = 0; i < totalFiles; i++) {
+        // Simulate upload progress for each file
+        for (let progress = 0; progress <= 100; progress += 20) {
+          await new Promise(resolve => setTimeout(resolve, 100)); // Simulate upload time
+          
+          setUploadProgress(prev => 
+            prev.map((item, index) => 
+              index === i 
+                ? { ...item, progress, status: progress === 100 ? 'completed' as const : 'uploading' as const }
+                : item
+            )
+          );
+        }
       }
-
-      // Mark all files as completed
-      setUploadProgress(prev => 
-        prev.map(item => ({ ...item, status: 'completed' as const, progress: 100 }))
-      );
 
       addToast({
         title: "Upload Successful",
-        description: `${selectedFiles.length} file(s) uploaded successfully`,
+        description: `${selectedFiles.length} file(s) uploaded successfully to ${availableAccounts.find(acc => acc.id === selectedAccount)?.provider}`,
         color: "success",
       });
 
