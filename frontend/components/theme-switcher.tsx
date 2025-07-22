@@ -17,7 +17,7 @@ export const ThemeSwitcher = () => {
     <Tooltip content={`Switch to ${isDark ? "light" : "dark"} mode`}>
       <Button
         isIconOnly
-        variant="flat"
+        variant="light"
         size="sm"
         className="absolute right-4 top-4"
         onPress={handleToggle}

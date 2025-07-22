@@ -13,7 +13,7 @@ import { StorageUsageCard } from "./storage-usage-card";
 import { SyncHealthCard } from "./sync-health-card";
 import { RecentFilesCard } from "./recent-files-card";
 import { SmartActionsCard } from "./smart-actions";
-import { NaturalLanguageSearch } from "./natural-language-search";
+// import { NaturalLanguageSearch } from "./natural-language-search";
 
 // Mock data for the dashboard
 const mockData = {
@@ -132,12 +132,13 @@ const LinkedAccountsView = ({ data }: { data: typeof mockData }) => {
           <SyncHealthCard />
         </div>
         <div className="space-y-6">
-          <RecentFilesCard />
           <SmartActionsCard />
+          <RecentFilesCard />
+
         </div>
       </div>
 
-      <NaturalLanguageSearch />
+      {/* <NaturalLanguageSearch /> */}
     </div>
   );
 };
@@ -165,31 +166,6 @@ const UnifiedStatsCard = ({ data }: { data: typeof mockData }) => {
     }
   };
 
-  // Calculate time since last sync
-  const getTimeSinceLastSync = () => {
-    const lastSync = new Date(data.lastSync);
-    const now = new Date();
-    const diffMs = now.getTime() - lastSync.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 60) {
-      return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
-    } else {
-      const diffHours = Math.floor(diffMins / 60);
-
-      if (diffHours < 24) {
-        return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-      } else {
-        const diffDays = Math.floor(diffHours / 24);
-
-        return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
-      }
-    }
-  };
-
-  // Calculate sync success rate (mock data)
-  const syncSuccessRate = 94;
-
   return (
     <motion.div
       animate={{ opacity: 1, y: 0 }}
@@ -200,6 +176,7 @@ const UnifiedStatsCard = ({ data }: { data: typeof mockData }) => {
         <CardBody className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {/* Linked Accounts */}
+            
             <div className="flex items-start gap-4">
               <div className="bg-primary-100/30 dark:bg-primary-900/20 p-3 rounded-xl">
                 <Icon className="text-primary text-2xl" icon="lucide:cloud" />
@@ -257,8 +234,7 @@ const UnifiedStatsCard = ({ data }: { data: typeof mockData }) => {
               </div>
             </div>
 
-            {/* Sync Success Rate */}
-            
+
           </div>
         </CardBody>
       </Card>

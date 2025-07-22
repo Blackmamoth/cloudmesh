@@ -45,7 +45,7 @@ export const HeroSection = () => {
                 size="lg"
                 startContent={<Icon icon="lucide:log-in" />}
               >
-                Sign in with CloudMesh
+                Get Started
               </Button>
             )}
           </div>
