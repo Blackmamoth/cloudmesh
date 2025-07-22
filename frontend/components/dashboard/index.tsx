@@ -258,35 +258,7 @@ const UnifiedStatsCard = ({ data }: { data: typeof mockData }) => {
             </div>
 
             {/* Sync Success Rate */}
-            <div className="flex items-start gap-4">
-              <div className="bg-primary-100/30 dark:bg-primary-900/20 p-3 rounded-xl">
-                <Icon
-                  className="text-primary text-2xl"
-                  icon="lucide:check-circle"
-                />
-              </div>
-              <div>
-                <p className="text-foreground-600 text-sm">Sync Success Rate</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xl font-semibold">
-                    {syncSuccessRate}%
-                  </span>
-                  <Badge
-                    color={
-                      syncSuccessRate > 90
-                        ? "success"
-                        : syncSuccessRate > 75
-                          ? "warning"
-                          : "danger"
-                    }
-                    size="sm"
-                    variant="flat"
-                  >
-                    Past 7 days
-                  </Badge>
-                </div>
-              </div>
-            </div>
+            
           </div>
         </CardBody>
       </Card>

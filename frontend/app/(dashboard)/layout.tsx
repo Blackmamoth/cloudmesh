@@ -14,7 +14,6 @@ import {
 } from "@heroui/dropdown";
 import { Avatar } from "@heroui/avatar";
 import { Navbar, NavbarBrand, NavbarContent } from "@heroui/navbar";
-import { Badge } from "@heroui/badge";
 import { useRouter } from "next/navigation";
 import { Providers } from "../providers";
 
@@ -27,7 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const location = usePathname();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const router = useRouter();
   const navItems = [
     { name: "Dashboard", icon: "lucide:layout-dashboard", path: "/dashboard" },
@@ -49,38 +48,33 @@ export default function RootLayout({
   return (
     <Providers themeProps={{ attribute: "class", defaultTheme: "system" }}>
       <div className="flex h-screen overflow-hidden bg-background">
-        {/* Mobile sidebar overlay - improved z-index */}
+        {/* Mobile sidebar overlay */}
         {isSidebarOpen && (
           <div
-            className="fixed inset-0 bg-foreground/20 backdrop-blur-sm z-50 lg:hidden"
+            className="fixed inset-0 bg-foreground/20 backdrop-blur-sm z-50 xl:hidden"
             onClick={() => setIsSidebarOpen(false)}
           />
         )}
 
-        {/* Sidebar - Fixed mobile styling and z-index */}
+        {/* Sidebar - Now collapsible on all screen sizes */}
         <motion.aside
-          animate={{ x: 0, opacity: 1 }}
-          className={`fixed inset-y-0 left-0 z-[60] w-[85%] max-w-[280px] bg-content1 border-r border-divider transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:z-auto lg:w-64 ${
-            isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+          animate={{ 
+            width: isSidebarOpen ? "16rem" : "0rem",
+            opacity: isSidebarOpen ? 1 : 0 
+          }}
+          className={`fixed inset-y-0 left-0 z-[60] bg-content1 border-r border-divider overflow-hidden xl:relative xl:z-auto ${
+            isSidebarOpen 
+              ? "w-64 xl:w-64" 
+              : "w-0 xl:w-0"
           }`}
-          initial={{ x: -20, opacity: 0 }}
-          transition={{ duration: 0.3 }}
+          initial={false}
+          transition={{ duration: 0.3, ease: "easeInOut" }}
         >
-          <div className="flex flex-col h-full">
+          <div className="flex flex-col h-full w-64">
             {/* Logo */}
-            <div className="flex items-center gap-2 p-4 h-16">
-              <Icon className="text-primary text-2xl" icon="lucide:layers" />
-              <span className="font-bold text-lg">CloudMesh</span>
-              {/* Close button for mobile - more prominent */}
-              <Button
-                isIconOnly
-                className="ml-auto lg:hidden"
-                size="sm"
-                variant="flat"
-                onPress={() => setIsSidebarOpen(false)}
-              >
-                <Icon className="text-lg" icon="lucide:x" />
-              </Button>
+            <div className="flex items-center gap-2 p-4 h-16 min-w-0">
+              <Icon className="text-primary text-2xl flex-shrink-0" icon="lucide:layers" />
+              <span className="font-bold text-lg truncate">CloudMesh</span>
             </div>
 
             {/* Navigation */}
@@ -92,11 +86,16 @@ export default function RootLayout({
                   className="justify-start w-full mb-1"
                   color={isActive(item.path) ? "primary" : "default"}
                   href={item.path}
-                  startContent={<Icon className="text-lg" icon={item.icon} />}
+                  startContent={<Icon className="text-lg flex-shrink-0" icon={item.icon} />}
                   variant={isActive(item.path) ? "flat" : "light"}
-                  onPress={() => setIsSidebarOpen(false)} // Close sidebar on navigation (mobile)
+                  onPress={() => {
+                    // Close sidebar on mobile/tablet navigation
+                    if (window.innerWidth < 1280) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                 >
-                  {item.name}
+                  <span className="truncate">{item.name}</span>
                 </Button>
               ))}
             </nav>
@@ -105,15 +104,6 @@ export default function RootLayout({
             <div className="p-4 border-t border-divider">
               <div className="flex items-center justify-between mb-4">
                 <ThemeSwitcher />
-                <Button
-                  isIconOnly
-                  aria-label="Help"
-                  color="default"
-                  size="sm"
-                  variant="light"
-                >
-                  <Icon className="text-lg" icon="lucide:help-circle" />
-                </Button>
               </div>
 
               <Dropdown placement="top-end">
@@ -122,18 +112,19 @@ export default function RootLayout({
                     className="justify-start w-full"
                     color="default"
                     endContent={
-                      <Icon className="text-xs" icon="lucide:chevron-up" />
+                      <Icon className="text-xs flex-shrink-0" icon="lucide:chevron-up" />
                     }
                     startContent={
                       <Avatar
                         size="sm"
                         src={data?.user.image || ""}
                         fallback={<Icon icon="lucide:user" />}
+                        className="flex-shrink-0"
                       />
                     }
                     variant="light"
                   >
-                    {data?.user.name}
+                    <span className="truncate">{data?.user.name}</span>
                   </Button>
                 </DropdownTrigger>
                 <DropdownMenu aria-label="User actions">
@@ -165,13 +156,6 @@ export default function RootLayout({
                     Settings
                   </DropdownItem>
                   <DropdownItem
-                    key="help"
-                    description="Documentation and support"
-                    startContent={<Icon icon="lucide:help-circle" />}
-                  >
-                    Help
-                  </DropdownItem>
-                  <DropdownItem
                     key="logout"
                     className="text-danger"
                     color="danger"
@@ -189,56 +173,31 @@ export default function RootLayout({
           </div>
         </motion.aside>
 
-        {/* Main content - Improved responsive layout */}
-        <div className="flex-1 flex flex-col overflow-hidden w-full">
-          {/* Top bar with more prominent hamburger menu */}
+        {/* Main content - Now properly responsive to sidebar state */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          {/* Top bar with sidebar toggle button */}
           <Navbar className="border-b border-divider h-16" maxWidth="full">
-            <NavbarContent className="lg:hidden">
-              <Button
-                isIconOnly
-                aria-label="Menu"
-                color="default"
-                variant="flat"
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              >
-                <Icon className="text-xl" icon="lucide:menu" />
-              </Button>
-            </NavbarContent>
-
             <NavbarContent>
-              <NavbarBrand>
-                <h1 className="text-xl font-semibold">{title}</h1>
+              <NavbarBrand className="flex items-center gap-3">
+                <Button
+                  isIconOnly
+                  aria-label="Toggle sidebar"
+                  color="default"
+                  size="sm"
+                  variant="light"
+                  onPress={() => setIsSidebarOpen(!isSidebarOpen)}
+                >
+                  <Icon 
+                    className="text-lg" 
+                    icon={isSidebarOpen ? "lucide:panel-left-close" : "lucide:panel-left-open"} 
+                  />
+                </Button>
+                <h1 className="text-xl font-semibold truncate">{title}</h1>
               </NavbarBrand>
-            </NavbarContent>
-
-            <NavbarContent justify="end">
-              <div className="hidden sm:flex items-center gap-2">
-                <Badge
-                  children={
-                    <Button isIconOnly aria-label="Sync Status" variant="light">
-                      <Icon
-                        className="text-lg text-success"
-                        icon="lucide:check-circle"
-                      />
-                    </Button>
-                  }
-                  color="success"
-                  content=""
-                  placement="bottom-right"
-                  size="sm"
-                />
-              </div>
-
-              <div className="sm:hidden">
-                <Avatar
-                  size="sm"
-                  src="https://img.heroui.chat/image/avatar?w=200&h=200&u=cloudmesh1"
-                />
-              </div>
             </NavbarContent>
           </Navbar>
 
-          {/* Page content - Improved responsive padding */}
+          {/* Page content - Improved responsive padding and width handling */}
           <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
             <div className="max-w-7xl mx-auto w-full">{children}</div>
           </main>
