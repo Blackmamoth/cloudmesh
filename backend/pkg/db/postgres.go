@@ -108,3 +108,7 @@ func PGUUID(val string) (*pgtype.UUID, error) {
 func PGInt4Field(val int32) pgtype.Int4 {
 	return pgtype.Int4{Int32: val, Valid: true}
 }
+
+func PGBool(val bool) pgtype.Bool {
+	return pgtype.Bool{Bool: val, Valid: true}
+}

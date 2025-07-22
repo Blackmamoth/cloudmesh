@@ -9,8 +9,10 @@ CREATE TABLE IF NOT EXISTS synced_items (
     name TEXT NOT NULL,
     extension TEXT NOT NULL,
     size BIGINT NOT NULL,
+    path TEXT DEFAULT NULL,
     parent_folder TEXT DEFAULT NULL,
     is_folder BOOLEAN NOT NULL,
+    is_trashed BOOLEAN DEFAULT FALSE,
 
     mime_type TEXT DEFAULT NULL,
     created_time TIMESTAMPTZ DEFAULT NULL,

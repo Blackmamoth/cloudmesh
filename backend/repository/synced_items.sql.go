@@ -17,9 +17,11 @@ type AddSyncedItemsParams struct {
 	Name           string             `json:"name"`
 	Extension      string             `json:"extension"`
 	Size           int64              `json:"size"`
+	Path           pgtype.Text        `json:"path"`
 	MimeType       pgtype.Text        `json:"mime_type"`
 	ParentFolder   pgtype.Text        `json:"parent_folder"`
 	IsFolder       bool               `json:"is_folder"`
+	IsTrashed      pgtype.Bool        `json:"is_trashed"`
 	ContentHash    pgtype.Text        `json:"content_hash"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
@@ -74,11 +76,57 @@ func (q *Queries) DeleteConflictingItems(ctx context.Context, arg DeleteConflict
 	return err
 }
 
+const getProviderFileIds = `-- name: GetProviderFileIds :many
+SELECT synced_items.id AS file_id, synced_items.provider_file_id, synced_items.path, linked_account.provider, linked_account.id AS account_id
+FROM synced_items JOIN linked_account ON linked_account.id = synced_items.account_id
+WHERE linked_account.user_id = $1 AND synced_items.id = ANY($2::UUID[])
+`
+
+type GetProviderFileIdsParams struct {
+	UserID string        `json:"user_id"`
+	Ids    []pgtype.UUID `json:"ids"`
+}
+
+type GetProviderFileIdsRow struct {
+	FileID         pgtype.UUID  `json:"file_id"`
+	ProviderFileID string       `json:"provider_file_id"`
+	Path           pgtype.Text  `json:"path"`
+	Provider       ProviderEnum `json:"provider"`
+	AccountID      pgtype.UUID  `json:"account_id"`
+}
+
+func (q *Queries) GetProviderFileIds(ctx context.Context, arg GetProviderFileIdsParams) ([]GetProviderFileIdsRow, error) {
+	rows, err := q.db.Query(ctx, getProviderFileIds, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetProviderFileIdsRow{}
+	for rows.Next() {
+		var i GetProviderFileIdsRow
+		if err := rows.Scan(
+			&i.FileID,
+			&i.ProviderFileID,
+			&i.Path,
+			&i.Provider,
+			&i.AccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSyncedItems = `-- name: GetSyncedItems :many
 SELECT synced_items.id,
        synced_items.name,
        synced_items.size,
        synced_items.is_folder,
+       synced_items.is_trashed,
        synced_items.thumbnail_link,
        synced_items.preview_link,
        synced_items.web_view_link,
@@ -139,6 +187,7 @@ type GetSyncedItemsRow struct {
 	Name           string             `json:"name"`
 	Size           int64              `json:"size"`
 	IsFolder       bool               `json:"is_folder"`
+	IsTrashed      pgtype.Bool        `json:"is_trashed"`
 	ThumbnailLink  pgtype.Text        `json:"thumbnail_link"`
 	PreviewLink    pgtype.Text        `json:"preview_link"`
 	WebViewLink    pgtype.Text        `json:"web_view_link"`
@@ -172,6 +221,7 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 			&i.Name,
 			&i.Size,
 			&i.IsFolder,
+			&i.IsTrashed,
 			&i.ThumbnailLink,
 			&i.PreviewLink,
 			&i.WebViewLink,
@@ -189,4 +239,18 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setFileTrashed = `-- name: SetFileTrashed :exec
+UPDATE synced_items SET is_trashed = true WHERE id = ANY($1::UUID[]) AND account_id = $2
+`
+
+type SetFileTrashedParams struct {
+	FileIds   []pgtype.UUID `json:"file_ids"`
+	AccountID pgtype.UUID   `json:"account_id"`
+}
+
+func (q *Queries) SetFileTrashed(ctx context.Context, arg SetFileTrashedParams) error {
+	_, err := q.db.Exec(ctx, setFileTrashed, arg.FileIds, arg.AccountID)
+	return err
 }

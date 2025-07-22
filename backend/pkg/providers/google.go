@@ -38,7 +38,7 @@ type GoogleProvider struct {
 const (
 	GOOGLE_SESSION_NAME  = "cloudmesh-google-oauth-session"
 	GOOGLE_PROVIDER_NAME = string(repository.ProviderEnumGoogle)
-	GOOGLE_AUTH_URL      = "https://oauth2.googleapis.com/token"
+	GOOGLE_AUTH_ENDPOINT = "https://oauth2.googleapis.com/token"
 )
 
 type GoogleAuthResponse struct {
@@ -214,17 +214,14 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		query = fmt.Sprintf("modifiedTime > '%s'", syncDetails.LastSyncedAt.Time.Format(time.RFC3339))
 	}
 
-	var files []repository.AddSyncedItemsParams
-
 	totalItemCount := 0
 
 	for {
-		var providerFileIDs []string
 
 		fileList, err := driveService.Files.
 			List().
 			Q(query).
-			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum)").
+			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed)").
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
@@ -253,87 +250,14 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 			return err
 		}
 
-		for _, file := range fileList.Files {
-
-			parsedCreatedTime, err := time.Parse(time.RFC3339, file.CreatedTime)
-			if err != nil {
-				parsedCreatedTime = time.Time{}
-			}
-
-			parsedModifiedTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
-			if err != nil {
-				parsedModifiedTime = time.Time{}
-			}
-
-			isFolder := file.MimeType == "application/vnd.google-apps.folder"
-
-			previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
-
-			if isFolder {
-				previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", file.Id)
-			}
-
-			parentFolder := "/"
-
-			if len(file.Parents) > 0 {
-				parentFolder = file.Parents[0]
-			}
-
-			files = append(files, repository.AddSyncedItemsParams{
-				AccountID:      accountID,
-				ProviderFileID: file.Id,
-				Name:           file.Name,
-				Extension:      file.FullFileExtension,
-				Size:           file.Size,
-				MimeType:       db.PGTextField(file.MimeType),
-				CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
-				ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
-				ParentFolder:   db.PGTextField(parentFolder),
-				IsFolder:       isFolder,
-				ContentHash:    db.PGTextField(file.Sha256Checksum),
-				ThumbnailLink:  db.PGTextField(file.ThumbnailLink),
-				PreviewLink:    db.PGTextField(previewLink),
-				WebViewLink:    db.PGTextField(file.WebViewLink),
-				WebContentLink: db.PGTextField(file.WebContentLink),
-				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
-			})
-
-			if syncDetails.LastSyncedAt.Valid {
-				providerFileIDs = append(providerFileIDs, file.Id)
-			}
-		}
+		files, providerFileIDs := p.convertToSyncedItemSlice(fileList.Files, accountID, syncDetails.LastSyncedAt.Valid)
 
 		var insertedRows int64
 
-		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-			qx := queries.WithTx(tx)
-
-			if len(providerFileIDs) > 0 {
-				err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
-					ProviderFileIds: providerFileIDs,
-					AccountID:       accountID,
-				})
-
-				if err != nil {
-					config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
-					return err
-				}
-			}
-
-			insertedRows, err = qx.AddSyncedItems(ctx, files)
-
-			if err != nil {
-				return err
-			}
-
-			return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
-				SyncPageToken: db.PGTextField(""),
-				AccountID:     accountID,
-			})
-		})
+		insertedRows, err = p.bulkInsertSyncedItems(ctx, conn, *queries, providerFileIDs, accountID, files)
 
 		if err != nil {
-			config.LOGGER.Error("failed to insert synced files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error("failed to bulk insert synced items", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
 			return err
 		}
 
@@ -346,8 +270,6 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		if pageToken == "" {
 			break
 		}
-
-		files = []repository.AddSyncedItemsParams{}
 	}
 
 	config.LOGGER.Info("Google drive sync successful", zap.Int("item_count", totalItemCount))
@@ -356,7 +278,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 }
 
 func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
-	reqUrl := fmt.Sprintf("%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s", GOOGLE_AUTH_URL, p.Config.ClientID, p.Config.ClientSecret, refreshToken)
+	reqUrl := fmt.Sprintf("%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s", GOOGLE_AUTH_ENDPOINT, p.Config.ClientID, p.Config.ClientSecret, refreshToken)
 
 	res, err := http.Post(reqUrl, "application/json", nil)
 	if err != nil {
@@ -468,70 +390,80 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 		return err
 	}
 
-	var files []repository.AddSyncedItemsParams
+	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
 
-	for _, r := range results {
+	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files)
 
-		parsedCreatedTime, err := time.Parse(time.RFC3339, r.CreatedTime)
-		if err != nil {
-			parsedCreatedTime = time.Time{}
-		}
+	if err != nil {
+		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
 
-		parsedModifiedTime, err := time.Parse(time.RFC3339, r.ModifiedTime)
-		if err != nil {
-			parsedModifiedTime = time.Time{}
-		}
+	return nil
+}
 
-		isFolder := r.MimeType == "application/vnd.google-apps.folder"
+func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
 
-		previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", r.Id)
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
 
-		if isFolder {
-			previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", r.Id)
-		}
+	httpClient := p.getHTTPClient(accessToken, refreshToken)
 
-		parentFolder := "/"
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
 
-		if len(r.Parents) > 0 {
-			parentFolder = r.Parents[0]
-		}
+	var (
+		fileIDs []pgtype.UUID
+		mu      sync.Mutex
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
 
-		files = append(files, repository.AddSyncedItemsParams{
-			AccountID:      *accountID,
-			ProviderFileID: r.Id,
-			Name:           r.Name,
-			Extension:      r.FullFileExtension,
-			Size:           r.Size,
-			MimeType:       db.PGTextField(r.MimeType),
-			ParentFolder:   db.PGTextField(parentFolder),
-			IsFolder:       isFolder,
-			ContentHash:    db.PGTextField(r.Sha256Checksum),
-			ThumbnailLink:  db.PGTextField(r.ThumbnailLink),
-			PreviewLink:    db.PGTextField(previewLink),
-			WebViewLink:    db.PGTextField(r.WebViewLink),
-			WebContentLink: db.PGTextField(r.WebContentLink),
-			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
-			CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
-			ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+	for _, f := range syncedItemIds {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			fmt.Println(f.ProviderFileID)
+			if err := p.moveToTrash(driveService, f.ProviderFileID); err != nil {
+				return err
+			}
+
+			mu.Lock()
+			fileIDs = append(fileIDs, f.FileID)
+			mu.Unlock()
+
+			return nil
 		})
+	}
+
+	if err := g.Wait(); err != nil {
+		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+		return err
 	}
 
 	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
-		insertedRows, err := qx.AddSyncedItems(ctx, files)
-
-		config.LOGGER.Info("insert new files", zap.Int64("item_count", insertedRows))
-
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
+			FileIds:   fileIDs,
+			AccountID: *accountID,
+		})
 	})
 
 	if err != nil {
-		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
 		return err
 	}
 
@@ -550,4 +482,114 @@ func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.
 	}
 
 	return uploadedFile, nil
+}
+
+func (p *GoogleProvider) moveToTrash(service *drive.Service, fileId string) error {
+	fileMetadata := &drive.File{
+		Trashed: true,
+	}
+
+	_, err := service.Files.Update(fileId, fileMetadata).Fields("id").Do()
+
+	return err
+}
+
+func (p *GoogleProvider) convertToSyncedItemSlice(files []*drive.File, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
+
+	syncedItems := []repository.AddSyncedItemsParams{}
+	providerFileIDs := []string{}
+
+	for _, file := range files {
+
+		parsedCreatedTime, err := time.Parse(time.RFC3339, file.CreatedTime)
+		if err != nil {
+			parsedCreatedTime = time.Time{}
+		}
+
+		parsedModifiedTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
+		if err != nil {
+			parsedModifiedTime = time.Time{}
+		}
+
+		isFolder := file.MimeType == "application/vnd.google-apps.folder"
+
+		previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", file.Id)
+
+		if isFolder {
+			previewLink = fmt.Sprintf("https://drive.google.com/folder/d/%s/preview", file.Id)
+		}
+
+		parentFolder := "/"
+
+		if len(file.Parents) > 0 {
+			parentFolder = file.Parents[0]
+		}
+
+		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
+			AccountID:      accountID,
+			ProviderFileID: file.Id,
+			Name:           file.Name,
+			Extension:      file.FullFileExtension,
+			Size:           file.Size,
+			MimeType:       db.PGTextField(file.MimeType),
+			CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
+			ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+			ParentFolder:   db.PGTextField(parentFolder),
+			IsFolder:       isFolder,
+			IsTrashed:      db.PGBool(file.Trashed),
+			ContentHash:    db.PGTextField(file.Sha256Checksum),
+			ThumbnailLink:  db.PGTextField(file.ThumbnailLink),
+			PreviewLink:    db.PGTextField(previewLink),
+			WebViewLink:    db.PGTextField(file.WebViewLink),
+			WebContentLink: db.PGTextField(file.WebContentLink),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+		})
+
+		if isValidLastSyncedData {
+			providerFileIDs = append(providerFileIDs, file.Id)
+		}
+	}
+
+	return syncedItems, providerFileIDs
+
+}
+
+func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams) (int64, error) {
+
+	var insertedRowCount int64
+	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		if len(providerFileIDs) > 0 {
+			err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
+				ProviderFileIds: providerFileIDs,
+				AccountID:       accountID,
+			})
+
+			if err != nil {
+				config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+				return err
+			}
+		}
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+
+		if err != nil {
+			return err
+		}
+
+		insertedRowCount = insertedRows
+
+		return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
+			SyncPageToken: db.PGTextField(""),
+			AccountID:     accountID,
+		})
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to bulk insert synced item", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return 0, err
+	}
+
+	return insertedRowCount, nil
 }
