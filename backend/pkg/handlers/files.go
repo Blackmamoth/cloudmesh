@@ -51,6 +51,10 @@ type MoveToTrashValidation struct {
 	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
 }
 
+type PermanentDeleteValidation struct {
+	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
+}
+
 func (v *GetFilesValidation) setDefaults() {
 	if v.Limit == 0 {
 		v.Limit = DEFAULT_LIMIT
@@ -94,6 +98,8 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 	r.Post("/", h.getFiles)
 
 	r.Post("/move-to-trash", h.moveFilesToTrash)
+
+	r.Post("/permanent-delete-files", h.permanentlyDelete)
 
 	return r
 }
@@ -226,8 +232,6 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fmt.Println(authTokens.Provider)
-
 	provider, ok := providers.OAuthProviders[string(authTokens.Provider)]
 	if !ok {
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, providers.ErrUnsupportedProvider)
@@ -288,8 +292,9 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 	queries := repository.New(conn)
 
 	fileDetails, err := queries.GetProviderFileIds(r.Context(), repository.GetProviderFileIdsParams{
-		UserID: userID,
-		Ids:    fileIds,
+		UserID:    userID,
+		Ids:       fileIds,
+		IsTrashed: db.PGBool(false),
 	})
 
 	if err != nil {
@@ -326,6 +331,89 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 
 	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
 		"message": "Files successfully moved to trash",
+	})
+}
+
+func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request) {
+	var payload MoveToTrashValidation
+
+	defer r.Body.Close()
+
+	if err := utils.ParseJSON(r, &payload); err != nil && errors.Is(err, io.EOF) {
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("request body cannot be empty"))
+		return
+	}
+
+	if err := utils.Validate.Struct(payload); err != nil {
+		errs := utils.GenerateValidationErrorObject(err.(validator.ValidationErrors), payload)
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, errs)
+		return
+	}
+
+	userID := r.Context().Value(middlewares.UserKey).(string)
+
+	var fileIds []pgtype.UUID
+
+	for _, fileID := range payload.FileIDs {
+		fileUUID, err := db.PGUUID(fileID)
+		if err != nil {
+			config.LOGGER.Error("failed to parse string into UUID", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not process your request, please try again"))
+			return
+		}
+
+		fileIds = append(fileIds, *fileUUID)
+	}
+
+	conn, err := db.ConnPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	queries := repository.New(conn)
+
+	fileDetails, err := queries.GetProviderFileIds(r.Context(), repository.GetProviderFileIdsParams{
+		UserID:    userID,
+		Ids:       fileIds,
+		IsTrashed: db.PGBool(true),
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to fetch file ids for move to trash action", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	grouped := h.groupFilesByAccountID(fileDetails)
+
+	for accountID, items := range grouped {
+		authTokens, err := queries.GetAuthTokens(r.Context(), repository.GetAuthTokensParams{
+			UserID:    userID,
+			AccountID: accountID,
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+
+		providerName := items[0].Provider
+
+		provider := providers.OAuthProviders[string(providerName)]
+
+		err = provider.PermanentlyDeleteFiles(r.Context(), &accountID, conn, queries, authTokens, items)
+		if err != nil {
+			config.LOGGER.Error("failed to move file ids for move to trash action", zap.Error(err), zap.String("provider", string(providerName)))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
+		"message": "Files successfully deleted",
 	})
 }
 

@@ -76,15 +76,30 @@ func (q *Queries) DeleteConflictingItems(ctx context.Context, arg DeleteConflict
 	return err
 }
 
+const deleteSyncedItems = `-- name: DeleteSyncedItems :exec
+DELETE FROM synced_items WHERE id = ANY($1::UUID[]) AND account_id = $2
+`
+
+type DeleteSyncedItemsParams struct {
+	FileIds   []pgtype.UUID `json:"file_ids"`
+	AccountID pgtype.UUID   `json:"account_id"`
+}
+
+func (q *Queries) DeleteSyncedItems(ctx context.Context, arg DeleteSyncedItemsParams) error {
+	_, err := q.db.Exec(ctx, deleteSyncedItems, arg.FileIds, arg.AccountID)
+	return err
+}
+
 const getProviderFileIds = `-- name: GetProviderFileIds :many
 SELECT synced_items.id AS file_id, synced_items.provider_file_id, synced_items.path, linked_account.provider, linked_account.id AS account_id
 FROM synced_items JOIN linked_account ON linked_account.id = synced_items.account_id
-WHERE linked_account.user_id = $1 AND synced_items.id = ANY($2::UUID[])
+WHERE linked_account.user_id = $1 AND synced_items.id = ANY($2::UUID[]) AND synced_items.is_trashed = $3
 `
 
 type GetProviderFileIdsParams struct {
-	UserID string        `json:"user_id"`
-	Ids    []pgtype.UUID `json:"ids"`
+	UserID    string        `json:"user_id"`
+	Ids       []pgtype.UUID `json:"ids"`
+	IsTrashed pgtype.Bool   `json:"is_trashed"`
 }
 
 type GetProviderFileIdsRow struct {
@@ -96,7 +111,7 @@ type GetProviderFileIdsRow struct {
 }
 
 func (q *Queries) GetProviderFileIds(ctx context.Context, arg GetProviderFileIdsParams) ([]GetProviderFileIdsRow, error) {
-	rows, err := q.db.Query(ctx, getProviderFileIds, arg.UserID, arg.Ids)
+	rows, err := q.db.Query(ctx, getProviderFileIds, arg.UserID, arg.Ids, arg.IsTrashed)
 	if err != nil {
 		return nil, err
 	}

@@ -70,7 +70,10 @@ DELETE FROM synced_items WHERE provider_file_id = ANY(@provider_file_ids::TEXT[]
 -- name: GetProviderFileIds :many
 SELECT synced_items.id AS file_id, synced_items.provider_file_id, synced_items.path, linked_account.provider, linked_account.id AS account_id
 FROM synced_items JOIN linked_account ON linked_account.id = synced_items.account_id
-WHERE linked_account.user_id = @user_id AND synced_items.id = ANY(@ids::UUID[]);
+WHERE linked_account.user_id = @user_id AND synced_items.id = ANY(@ids::UUID[]) AND synced_items.is_trashed = @is_trashed;
 
 -- name: SetFileTrashed :exec
 UPDATE synced_items SET is_trashed = true WHERE id = ANY(@file_ids::UUID[]) AND account_id = @account_id;
+
+-- name: DeleteSyncedItems :exec
+DELETE FROM synced_items WHERE id = ANY(@file_ids::UUID[]) AND account_id = @account_id;

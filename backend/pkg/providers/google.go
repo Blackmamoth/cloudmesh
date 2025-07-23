@@ -470,6 +470,74 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 	return nil
 }
 
+func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	httpClient := p.getHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	var (
+		fileIDs []pgtype.UUID
+		mu      sync.Mutex
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range syncedItemIds {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			fmt.Println(f.ProviderFileID)
+			if err := p.permanentlyDeleteFile(driveService, f.ProviderFileID); err != nil {
+				return err
+			}
+
+			mu.Lock()
+			fileIDs = append(fileIDs, f.FileID)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+		return err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
+			FileIds:   fileIDs,
+			AccountID: *accountID,
+		})
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.UploadedFile) (*drive.File, error) {
 	mimeType := file.ContentType
 
@@ -492,6 +560,10 @@ func (p *GoogleProvider) moveToTrash(service *drive.Service, fileId string) erro
 	_, err := service.Files.Update(fileId, fileMetadata).Fields("id").Do()
 
 	return err
+}
+
+func (p *GoogleProvider) permanentlyDeleteFile(service *drive.Service, fileId string) error {
+	return service.Files.Delete(fileId).Do()
 }
 
 func (p *GoogleProvider) convertToSyncedItemSlice(files []*drive.File, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
