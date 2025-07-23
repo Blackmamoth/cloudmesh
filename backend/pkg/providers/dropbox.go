@@ -58,19 +58,7 @@ type DropboxAccountInfo struct {
 
 type DropboxListFolderEntries struct {
 	ID             string    `json:"id"`
-	Tag            string    `json:".tag"`
-	Name           string    `json:"name"`
-	PathDisplay    string    `json:"path_display"`
-	PathLower      string    `json:"path_lower"`
-	ClientModified time.Time `json:"client_modified"`
-	ServerModified time.Time `json:"server_modified"`
-	ContentHash    string    `json:"content_hash"`
-	Revision       string    `json:"rev"`
-	Size           int       `json:"size"`
-}
-
-type DropboxUploadResponse struct {
-	ID             string    `json:"id"`
+	Tag            string    `json:".tag,omitempty"`
 	Name           string    `json:"name"`
 	PathDisplay    string    `json:"path_display"`
 	PathLower      string    `json:"path_lower"`
@@ -94,13 +82,31 @@ type DropboxAuthResponse struct {
 	AccountID   string `json:"account_id"`
 }
 
+type DropboxFileMetadata struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	PathDisplay    string    `json:"path_display"`
+	PathLower      string    `json:"path_lower"`
+	ClientModified time.Time `json:"client_modified"`
+	ServerModified time.Time `json:"server_modified"`
+	Rev            string    `json:"rev"`
+	Size           int64     `json:"size"`
+	IsDownloadable bool      `json:"is_downloadable"`
+}
+
+type DeleteFileResponse struct {
+	Metadata DropboxFileMetadata `json:"metadata"`
+}
+
 const (
-	DROPBOX_SESSION_NAME    = "cloudmesh-dropbox-oauth-session"
-	DROPBOX_PROVIDER_NAME   = string(repository.ProviderEnumDropbox)
-	DROPBOX_AUTH_URL        = "https://api.dropboxapi.com/oauth2/token"
-	DROPBOX_ACCOUNT_URL     = "https://api.dropboxapi.com/2/users/get_current_account"
-	DROPBOX_LIST_FOLDER_URL = "https://api.dropboxapi.com/2/files/list_folder"
-	DROPBOX_UPLOAD_URL      = "https://content.dropboxapi.com/2/files/upload"
+	DROPBOX_SESSION_NAME              = "cloudmesh-dropbox-oauth-session"
+	DROPBOX_PROVIDER_NAME             = string(repository.ProviderEnumDropbox)
+	DROPBOX_AUTH_ENDPOINT             = "https://api.dropboxapi.com/oauth2/token"
+	DROPBOX_ACCOUNT_ENDPOINT          = "https://api.dropboxapi.com/2/users/get_current_account"
+	DROPBOX_LIST_FOLDER_ENDPOINT      = "https://api.dropboxapi.com/2/files/list_folder"
+	DROPBOX_UPLOAD_ENDPOINT           = "https://content.dropboxapi.com/2/files/upload"
+	DROPBOX_DELETE_V2_ENDPOINT        = "https://api.dropboxapi.com/2/files/delete_v2"
+	DROPBOX_PERMANENT_DELETE_ENDPOINT = "https://api.dropboxapi.com/2/files/permanently_delete"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -207,7 +213,7 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, DROPBOX_ACCOUNT_URL, nil)
+	req, err := http.NewRequest(http.MethodPost, DROPBOX_ACCOUNT_ENDPOINT, nil)
 	if err != nil {
 		config.LOGGER.Error("failed to initiate new HTTP POST request", zap.Error(err))
 		return nil, err
@@ -257,8 +263,6 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 
 	queries := repository.New(conn)
 
-	var files []repository.AddSyncedItemsParams
-
 	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
 
 	if err != nil {
@@ -285,7 +289,6 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 	}
 
 	for {
-		var providerFileIDs []string
 
 		dropboxResponse, err := p.getDropboxFolderList(ctx, accountID, conn, accessToken, refreshToken, cursor)
 
@@ -294,66 +297,11 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 			return err
 		}
 
-		for _, entry := range dropboxResponse.Entries {
-
-			ext := filepath.Ext(entry.Name)
-
-			mimeType := mime.TypeByExtension(ext)
-
-			parentFolder := path.Dir(entry.PathDisplay)
-
-			files = append(files, repository.AddSyncedItemsParams{
-				AccountID:      accountID,
-				ProviderFileID: entry.ID,
-				Name:           entry.Name,
-				Extension:      ext,
-				Size:           int64(entry.Size),
-				MimeType:       db.PGTextField(mimeType),
-				ParentFolder:   db.PGTextField(parentFolder),
-				IsFolder:       entry.Tag == "folder",
-				ContentHash:    db.PGTextField(entry.ContentHash),
-				CreatedTime:    db.PGTimestamptzField(time.Time{}),
-				ModifiedTime:   db.PGTimestamptzField(entry.ClientModified),
-				ThumbnailLink:  db.PGTextField(""),
-				PreviewLink:    db.PGTextField(""),
-				WebViewLink:    db.PGTextField(""),
-				WebContentLink: db.PGTextField(""),
-				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
-			})
-
-			if syncDetails.LastSyncedAt.Valid {
-				providerFileIDs = append(providerFileIDs, entry.ID)
-			}
-		}
+		files, providerFileIDs := p.convertToSyncedItemSlice(dropboxResponse.Entries, accountID, syncDetails.LastSyncedAt.Valid)
 
 		var insertedRows int64
 
-		err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-			qx := queries.WithTx(tx)
-
-			if len(providerFileIDs) > 0 {
-				err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
-					ProviderFileIds: providerFileIDs,
-					AccountID:       accountID,
-				})
-
-				if err != nil {
-					config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
-					return err
-				}
-			}
-
-			insertedRows, err = qx.AddSyncedItems(ctx, files)
-
-			if err != nil {
-				return err
-			}
-
-			return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
-				AccountID:     accountID,
-				SyncPageToken: db.PGTextField(cursor),
-			})
-		})
+		insertedRows, err = p.bulkInsertSyncedItems(ctx, conn, *queries, providerFileIDs, accountID, files, dropboxResponse.Cursor)
 
 		if err != nil {
 			config.LOGGER.Error("failed to insert synced files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
@@ -369,8 +317,6 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 		if !dropboxResponse.HasMore {
 			break
 		}
-
-		files = []repository.AddSyncedItemsParams{}
 	}
 
 	config.LOGGER.Info("Dropbox sync successful", zap.Int("item_count", totalItemCount))
@@ -379,11 +325,11 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 }
 
 func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
-	dropboxApiURL := DROPBOX_LIST_FOLDER_URL
+	dropboxApiURL := DROPBOX_LIST_FOLDER_ENDPOINT
 	reqBody := []byte(`{"path": "", "recursive": true}`)
 
 	if cursor != "" {
-		dropboxApiURL = fmt.Sprintf("%s/continue", DROPBOX_LIST_FOLDER_URL)
+		dropboxApiURL = fmt.Sprintf("%s/continue", DROPBOX_LIST_FOLDER_ENDPOINT)
 		reqBody = fmt.Appendf(nil, "{\"cursor\": \"%s\"}", cursor)
 	}
 
@@ -442,7 +388,7 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	data.Add("client_id", p.Config.ClientID)
 	data.Add("client_secret", p.Config.ClientSecret)
 
-	res, err := http.Post(DROPBOX_AUTH_URL, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
+	res, err := http.Post(DROPBOX_AUTH_ENDPOINT, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		config.LOGGER.Error("http request for dropbox token renewal failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
 		return "", 0, err
@@ -495,15 +441,16 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 }
 
 func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return err
 	}
 
 	var (
 		mu      sync.Mutex
-		results []*DropboxUploadResponse
+		results []DropboxListFolderEntries
 		g, _    = errgroup.WithContext(ctx)
 		sem     = make(chan struct{}, 10)
 	)
@@ -520,7 +467,7 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 			}
 
 			mu.Lock()
-			results = append(results, uploadedFile)
+			results = append(results, *uploadedFile)
 			mu.Unlock()
 
 			return nil
@@ -531,59 +478,21 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 		return err
 	}
 
-	var files []repository.AddSyncedItemsParams
+	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
 
-	for _, r := range results {
+	fmt.Println(files)
 
-		ext := filepath.Ext(r.Name)
-
-		mimeType := mime.TypeByExtension(ext)
-
-		parentFolder := path.Dir(r.PathDisplay)
-
-		files = append(files, repository.AddSyncedItemsParams{
-			AccountID:      *accountID,
-			ProviderFileID: r.ID,
-			Name:           r.Name,
-			Extension:      ext,
-			Size:           int64(r.Size),
-			MimeType:       db.PGTextField(mimeType),
-			ParentFolder:   db.PGTextField(parentFolder),
-			IsFolder:       false,
-			ContentHash:    db.PGTextField(r.ContentHash),
-			CreatedTime:    db.PGTimestamptzField(time.Time{}),
-			ModifiedTime:   db.PGTimestamptzField(r.ClientModified),
-			ThumbnailLink:  db.PGTextField(""),
-			PreviewLink:    db.PGTextField(""),
-			WebViewLink:    db.PGTextField(""),
-			WebContentLink: db.PGTextField(""),
-			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
-		})
-	}
-
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-		qx := queries.WithTx(tx)
-
-		insertedRows, err := qx.AddSyncedItems(ctx, files)
-
-		config.LOGGER.Info("insert new files", zap.Int64("item_count", insertedRows))
-
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
+	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
 
 	if err != nil {
-		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return err
 	}
 
 	return nil
 }
 
-func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) (*DropboxUploadResponse, error) {
+func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) (*DropboxListFolderEntries, error) {
 	dropboxArgs := map[string]any{
 		"path":            fmt.Sprintf("/%s", file.FileHeader.Filename),
 		"mode":            "add",
@@ -601,9 +510,9 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest("POST", DROPBOX_UPLOAD_URL, file.File)
+	req, err := http.NewRequest("POST", DROPBOX_UPLOAD_ENDPOINT, file.File)
 	if err != nil {
-		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
+		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Error(err))
 		return nil, err
 	}
 
@@ -613,7 +522,7 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Error(err))
+		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Error(err))
 		return nil, err
 	}
 
@@ -626,11 +535,11 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_URL), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Int("status_code", res.StatusCode))
 		return nil, fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
 	}
 
-	var response DropboxUploadResponse
+	var response DropboxListFolderEntries
 
 	err = json.Unmarshal(body, &response)
 
@@ -640,4 +549,277 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 	}
 
 	return &response, nil
+}
+
+func (p *DropboxProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	var (
+		fileIDs []pgtype.UUID
+		mu      sync.Mutex
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range syncedItemIds {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := p.moveToTrash(accessToken, f.Path.String); err != nil {
+				return err
+			}
+
+			mu.Lock()
+			fileIDs = append(fileIDs, f.FileID)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+		return err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
+			FileIds:   fileIDs,
+			AccountID: *accountID,
+		})
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	var (
+		fileIDs []pgtype.UUID
+		mu      sync.Mutex
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range syncedItemIds {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := p.permanentlyDeleteFile(accessToken, f.Path.String); err != nil {
+				return err
+			}
+
+			mu.Lock()
+			fileIDs = append(fileIDs, f.FileID)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+		return err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
+			FileIds:   fileIDs,
+			AccountID: *accountID,
+		})
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (p *DropboxProvider) moveToTrash(accessToken, filePath string) error {
+	reqBody := fmt.Appendf(nil, "{\"path\": \"%s\"}", filePath)
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPost, DROPBOX_DELETE_V2_ENDPOINT, bytes.NewReader(reqBody))
+	if err != nil {
+		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("request has failed with status 401")
+	}
+
+	if res.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request for dropbox delete action did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return fmt.Errorf("%s", string(body[:]))
+	}
+
+	var dropboxResponse DeleteFileResponse
+
+	err = json.Unmarshal(body, &dropboxResponse)
+
+	return err
+}
+
+func (p *DropboxProvider) permanentlyDeleteFile(accessToken, filePath string) error {
+	reqBody := fmt.Appendf(nil, "{\"path\": \"%s\"}", filePath)
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPost, DROPBOX_PERMANENT_DELETE_ENDPOINT, bytes.NewReader(reqBody))
+	if err != nil {
+		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox permanent delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("request has failed with status 401")
+	}
+
+	if res.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request for dropbox permanent delete action did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return fmt.Errorf("%s", string(body[:]))
+	}
+
+	return nil
+}
+
+func (p *DropboxProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams, cursor string) (int64, error) {
+
+	var insertedRowCount int64
+
+	fmt.Println("here")
+	fmt.Println(files)
+
+	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		if len(providerFileIDs) > 0 {
+			err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
+				ProviderFileIds: providerFileIDs,
+				AccountID:       accountID,
+			})
+
+			if err != nil {
+				config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+				return err
+			}
+		}
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+
+		if err != nil {
+			return err
+		}
+
+		insertedRowCount = insertedRows
+
+		return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
+			AccountID:     accountID,
+			SyncPageToken: db.PGTextField(cursor),
+		})
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to bulk insert synced items", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return 0, err
+	}
+
+	return insertedRowCount, nil
+}
+
+func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEntries, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
+
+	syncedItems := []repository.AddSyncedItemsParams{}
+	providerFileIDs := []string{}
+
+	for _, entry := range entries {
+
+		ext := filepath.Ext(entry.Name)
+
+		mimeType := mime.TypeByExtension(ext)
+
+		parentFolder := path.Dir(entry.PathDisplay)
+
+		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
+			AccountID:      accountID,
+			ProviderFileID: entry.ID,
+			Name:           entry.Name,
+			Extension:      ext,
+			Size:           int64(entry.Size),
+			Path:           db.PGTextField(entry.PathDisplay),
+			MimeType:       db.PGTextField(mimeType),
+			ParentFolder:   db.PGTextField(parentFolder),
+			IsFolder:       entry.Tag == "folder",
+			ContentHash:    db.PGTextField(entry.ContentHash),
+			CreatedTime:    db.PGTimestamptzField(time.Time{}),
+			ModifiedTime:   db.PGTimestamptzField(entry.ClientModified),
+			ThumbnailLink:  db.PGTextField(""),
+			PreviewLink:    db.PGTextField(""),
+			WebViewLink:    db.PGTextField(""),
+			WebContentLink: db.PGTextField(""),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+		})
+
+		if isValidLastSyncedData {
+			providerFileIDs = append(providerFileIDs, entry.ID)
+		}
+	}
+
+	return syncedItems, providerFileIDs
 }

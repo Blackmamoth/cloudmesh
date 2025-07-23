@@ -179,8 +179,10 @@ type SyncedItem struct {
 	Name           string             `json:"name"`
 	Extension      string             `json:"extension"`
 	Size           int64              `json:"size"`
+	Path           pgtype.Text        `json:"path"`
 	ParentFolder   pgtype.Text        `json:"parent_folder"`
 	IsFolder       bool               `json:"is_folder"`
+	IsTrashed      pgtype.Bool        `json:"is_trashed"`
 	MimeType       pgtype.Text        `json:"mime_type"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`

@@ -34,9 +34,11 @@ func (r iteratorForAddSyncedItems) Values() ([]interface{}, error) {
 		r.rows[0].Name,
 		r.rows[0].Extension,
 		r.rows[0].Size,
+		r.rows[0].Path,
 		r.rows[0].MimeType,
 		r.rows[0].ParentFolder,
 		r.rows[0].IsFolder,
+		r.rows[0].IsTrashed,
 		r.rows[0].ContentHash,
 		r.rows[0].CreatedTime,
 		r.rows[0].ModifiedTime,
@@ -53,5 +55,5 @@ func (r iteratorForAddSyncedItems) Err() error {
 }
 
 func (q *Queries) AddSyncedItems(ctx context.Context, arg []AddSyncedItemsParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"synced_items"}, []string{"account_id", "provider_file_id", "name", "extension", "size", "mime_type", "parent_folder", "is_folder", "content_hash", "created_time", "modified_time", "thumbnail_link", "preview_link", "web_view_link", "web_content_link", "link_expires_at"}, &iteratorForAddSyncedItems{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"synced_items"}, []string{"account_id", "provider_file_id", "name", "extension", "size", "path", "mime_type", "parent_folder", "is_folder", "is_trashed", "content_hash", "created_time", "modified_time", "thumbnail_link", "preview_link", "web_view_link", "web_content_link", "link_expires_at"}, &iteratorForAddSyncedItems{rows: arg})
 }

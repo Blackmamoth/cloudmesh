@@ -14,6 +14,7 @@ import (
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -43,7 +44,15 @@ type GetFilesValidation struct {
 }
 
 type UploadFilesValidation struct {
-	AccountID string `validate:"required" json:"account_id"`
+	AccountID string `validate:"required,uuid" json:"account_id"`
+}
+
+type MoveToTrashValidation struct {
+	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
+}
+
+type PermanentDeleteValidation struct {
+	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
 }
 
 func (v *GetFilesValidation) setDefaults() {
@@ -87,6 +96,10 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 	})
 
 	r.Post("/", h.getFiles)
+
+	r.Post("/move-to-trash", h.moveFilesToTrash)
+
+	r.Post("/permanent-delete-files", h.permanentlyDelete)
 
 	return r
 }
@@ -227,6 +240,8 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 
 	err = provider.UploadFiles(r.Context(), accountID, conn, queries, authTokens, uploadedFiles)
 
+	fmt.Println(err)
+
 	if err != nil {
 		config.LOGGER.Error("failed to upload files", zap.Error(err), zap.String("user_id", userID), zap.String("account_id", accountID.String()))
 		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("your files could not be uploaded, please try again later"))
@@ -234,4 +249,180 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 	}
 
 	utils.SendAPIResponse(w, http.StatusOK, "files uploaded successfully")
+}
+
+func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) {
+	var payload MoveToTrashValidation
+
+	defer r.Body.Close()
+
+	if err := utils.ParseJSON(r, &payload); err != nil && errors.Is(err, io.EOF) {
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("request body cannot be empty"))
+		return
+	}
+
+	if err := utils.Validate.Struct(payload); err != nil {
+		errs := utils.GenerateValidationErrorObject(err.(validator.ValidationErrors), payload)
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, errs)
+		return
+	}
+
+	userID := r.Context().Value(middlewares.UserKey).(string)
+
+	var fileIds []pgtype.UUID
+
+	for _, fileID := range payload.FileIDs {
+		fileUUID, err := db.PGUUID(fileID)
+		if err != nil {
+			config.LOGGER.Error("failed to parse string into UUID", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not process your request, please try again"))
+			return
+		}
+
+		fileIds = append(fileIds, *fileUUID)
+	}
+
+	conn, err := db.ConnPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	queries := repository.New(conn)
+
+	fileDetails, err := queries.GetProviderFileIds(r.Context(), repository.GetProviderFileIdsParams{
+		UserID:    userID,
+		Ids:       fileIds,
+		IsTrashed: db.PGBool(false),
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to fetch file ids for move to trash action", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	grouped := h.groupFilesByAccountID(fileDetails)
+
+	for accountID, items := range grouped {
+		authTokens, err := queries.GetAuthTokens(r.Context(), repository.GetAuthTokensParams{
+			UserID:    userID,
+			AccountID: accountID,
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+
+		providerName := items[0].Provider
+
+		provider := providers.OAuthProviders[string(providerName)]
+
+		err = provider.MoveToTrash(r.Context(), &accountID, conn, queries, authTokens, items)
+		if err != nil {
+			config.LOGGER.Error("failed to move file ids for move to trash action", zap.Error(err), zap.String("provider", string(providerName)))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
+		"message": "Files successfully moved to trash",
+	})
+}
+
+func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request) {
+	var payload MoveToTrashValidation
+
+	defer r.Body.Close()
+
+	if err := utils.ParseJSON(r, &payload); err != nil && errors.Is(err, io.EOF) {
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("request body cannot be empty"))
+		return
+	}
+
+	if err := utils.Validate.Struct(payload); err != nil {
+		errs := utils.GenerateValidationErrorObject(err.(validator.ValidationErrors), payload)
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, errs)
+		return
+	}
+
+	userID := r.Context().Value(middlewares.UserKey).(string)
+
+	var fileIds []pgtype.UUID
+
+	for _, fileID := range payload.FileIDs {
+		fileUUID, err := db.PGUUID(fileID)
+		if err != nil {
+			config.LOGGER.Error("failed to parse string into UUID", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not process your request, please try again"))
+			return
+		}
+
+		fileIds = append(fileIds, *fileUUID)
+	}
+
+	conn, err := db.ConnPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	queries := repository.New(conn)
+
+	fileDetails, err := queries.GetProviderFileIds(r.Context(), repository.GetProviderFileIdsParams{
+		UserID:    userID,
+		Ids:       fileIds,
+		IsTrashed: db.PGBool(true),
+	})
+
+	if err != nil {
+		config.LOGGER.Error("failed to fetch file ids for move to trash action", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	grouped := h.groupFilesByAccountID(fileDetails)
+
+	for accountID, items := range grouped {
+		authTokens, err := queries.GetAuthTokens(r.Context(), repository.GetAuthTokensParams{
+			UserID:    userID,
+			AccountID: accountID,
+		})
+
+		if err != nil {
+			config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+
+		providerName := items[0].Provider
+
+		provider := providers.OAuthProviders[string(providerName)]
+
+		err = provider.PermanentlyDeleteFiles(r.Context(), &accountID, conn, queries, authTokens, items)
+		if err != nil {
+			config.LOGGER.Error("failed to move file ids for move to trash action", zap.Error(err), zap.String("provider", string(providerName)))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
+		"message": "Files successfully deleted",
+	})
+}
+
+func (h *FilesHandler) groupFilesByAccountID(files []repository.GetProviderFileIdsRow) map[pgtype.UUID][]repository.GetProviderFileIdsRow {
+	grouped := make(map[pgtype.UUID][]repository.GetProviderFileIdsRow)
+
+	for _, file := range files {
+		grouped[file.AccountID] = append(grouped[file.AccountID], file)
+	}
+
+	return grouped
 }
