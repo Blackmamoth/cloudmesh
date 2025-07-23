@@ -20,20 +20,19 @@ import { Button } from "@heroui/button";
 
 import { formatDate } from "@/lib/utils";
 import { formatFileSize, getFileIcon } from "@/lib/utils";
-import { File } from "@/lib/types";
-import { SortOption } from "@/lib/types";
+import { TrashItem, TrashSortOption } from "@/lib/types";
 
-interface FileTableProps {
-  files: File[];
-  selectedFiles: string[];
-  onSelectionChange: (selectedFiles: string[]) => void;
-  sortOption: SortOption;
-  onSortChange: (sortOption: SortOption) => void;
+interface TrashTableProps {
+  items: TrashItem[];
+  selectedItems: string[];
+  onSelectionChange: (selectedItems: string[]) => void;
+  sortOption: TrashSortOption;
+  onSortChange: (sortOption: TrashSortOption) => void;
 }
 
-export const FileTable: React.FC<FileTableProps> = ({
-  files,
-  selectedFiles,
+export const TrashTable: React.FC<TrashTableProps> = ({
+  items,
+  selectedItems,
   onSelectionChange,
   sortOption,
   onSortChange,
@@ -49,16 +48,7 @@ export const FileTable: React.FC<FileTableProps> = ({
       typeof keys === "string" &&
       (keys === "all" || keys === "none")
     ) {
-      onSelectionChange(keys === "all" ? files.map((file) => file.id) : []);
-    }
-  };
-
-  // Handle select all
-  const handleSelectAll = (isSelected: boolean) => {
-    if (isSelected) {
-      onSelectionChange(files.map((file) => file.id));
-    } else {
-      onSelectionChange([]);
+      onSelectionChange(keys === "all" ? items.map((item) => item.id) : []);
     }
   };
 
@@ -67,21 +57,21 @@ export const FileTable: React.FC<FileTableProps> = ({
     if (columnKey === sortOption.field) {
       // Toggle direction if same column
       onSortChange({
-        field: columnKey as "name" | "size" | "modifiedAt",
+        field: columnKey as "name" | "size" | "modifiedAt" | "deletedAt",
         direction: sortOption.direction === "asc" ? "desc" : "asc",
       });
     } else {
       // New column, default to ascending
       onSortChange({
-        field: columnKey as "name" | "size" | "modifiedAt",
+        field: columnKey as "name" | "size" | "modifiedAt" | "deletedAt",
         direction: "asc",
       });
     }
   };
 
-  // Handle file action
-  const handleFileAction = (fileId: string, action: string) => {
-    console.log(`Performing ${action} on file ${fileId}`);
+  // Handle item action
+  const handleItemAction = (itemId: string, action: string) => {
+    console.log(`Performing ${action} on trash item ${itemId}`);
     // Implementation would go here
   };
 
@@ -90,12 +80,12 @@ export const FileTable: React.FC<FileTableProps> = ({
       <Table
         isHeaderSticky
         removeWrapper
-        aria-label="Files table"
+        aria-label="Trash items table"
         classNames={{
-          base: "min-w-[800px]",
+          base: "min-w-[1000px]",
           emptyWrapper: "py-10",
         }}
-        selectedKeys={new Set(selectedFiles)}
+        selectedKeys={new Set(selectedItems)}
         selectionMode="multiple"
         onSelectionChange={handleSelectionChange}
       >
@@ -140,11 +130,11 @@ export const FileTable: React.FC<FileTableProps> = ({
           <TableColumn>Owner</TableColumn>
           <TableColumn
             className="cursor-pointer"
-            onClick={() => handleSortChange("modifiedAt")}
+            onClick={() => handleSortChange("deletedAt")}
           >
             <div className="flex items-center gap-1">
-              Modified
-              {sortOption.field === "modifiedAt" && (
+              Deleted
+              {sortOption.field === "deletedAt" && (
                 <Icon
                   className="text-xs"
                   icon={
@@ -156,37 +146,37 @@ export const FileTable: React.FC<FileTableProps> = ({
               )}
             </div>
           </TableColumn>
+          <TableColumn>Deleted By</TableColumn>
           <TableColumn>Actions</TableColumn>
         </TableHeader>
         <TableBody
           emptyContent={
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="bg-primary/10 dark:bg-primary/20 p-4 rounded-full mb-4">
+              <div className="bg-success/10 dark:bg-success/20 p-4 rounded-full mb-4">
                 <Icon
-                  className="text-primary text-4xl"
-                  icon="lucide:file-question"
+                  className="text-success text-4xl"
+                  icon="lucide:trash-2"
                 />
               </div>
-              <h3 className="text-xl font-semibold mb-2">No files found</h3>
+              <h3 className="text-xl font-semibold mb-2">Trash is empty</h3>
               <p className="text-foreground-500 max-w-md">
-                Try adjusting your search or filter criteria to find what you're
-                looking for.
+                Your trash is empty. When you delete files, they'll appear here and can be restored within 30 days.
               </p>
             </div>
           }
         >
-          {files.map((file) => (
-            <TableRow key={file.id}>
+          {items.map((item) => (
+            <TableRow key={item.id}>
               <TableCell>
                 <div className="flex items-center gap-2">
                   <Icon
-                    className="text-primary"
-                    icon={getFileIcon(file.type)}
+                    className="text-danger-400 opacity-75"
+                    icon={getFileIcon(item.type)}
                   />
-                  <span className="truncate max-w-[200px]">{file.name}</span>
+                  <span className="truncate max-w-[200px] text-foreground-600">{item.name}</span>
                 </div>
               </TableCell>
-              <TableCell>{formatFileSize(file.size)}</TableCell>
+              <TableCell>{formatFileSize(item.size)}</TableCell>
               <TableCell>
                 <Chip
                   size="sm"
@@ -194,7 +184,7 @@ export const FileTable: React.FC<FileTableProps> = ({
                     <Icon
                       className="text-sm"
                       icon={
-                        file.provider === "Google Drive"
+                        item.provider === "Google Drive"
                           ? "logos:google-drive"
                           : "logos:dropbox"
                       }
@@ -202,23 +192,38 @@ export const FileTable: React.FC<FileTableProps> = ({
                   }
                   variant="flat"
                 >
-                  {file.provider}
+                  {item.provider}
                 </Chip>
               </TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
                   <Avatar
                     showFallback
-                    name={file.owner.name}
+                    name={item.owner.name}
                     size="sm"
-                    src={file.owner.avatar}
+                    src={item.owner.avatar}
                   />
                   <span className="hidden md:inline text-sm">
-                    {file.owner.name}
+                    {item.owner.name}
                   </span>
                 </div>
               </TableCell>
-              <TableCell>{formatDate(file.modifiedAt)}</TableCell>
+              <TableCell>
+                <span className="text-sm">{formatDate(item.deletedAt)}</span>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <Avatar
+                    showFallback
+                    name={item.deletedBy.name}
+                    size="sm"
+                    src={item.deletedBy.avatar}
+                  />
+                  <span className="hidden lg:inline text-sm">
+                    {item.deletedBy.name}
+                  </span>
+                </div>
+              </TableCell>
               <TableCell>
                 <Dropdown>
                   <DropdownTrigger asChild>
@@ -228,10 +233,16 @@ export const FileTable: React.FC<FileTableProps> = ({
                   </DropdownTrigger>
                   <DropdownMenu>
                     <DropdownItem
-                      key="view"
+                      key="restore"
+                      startContent={<Icon icon="lucide:undo-2" />}
+                    >
+                      Restore
+                    </DropdownItem>
+                    <DropdownItem
+                      key="preview"
                       startContent={<Icon icon="lucide:eye" />}
                     >
-                      View
+                      Preview
                     </DropdownItem>
                     <DropdownItem
                       key="download"
@@ -240,18 +251,18 @@ export const FileTable: React.FC<FileTableProps> = ({
                       Download
                     </DropdownItem>
                     <DropdownItem
-                      key="copy"
-                      startContent={<Icon icon="lucide:copy" />}
+                      key="info"
+                      startContent={<Icon icon="lucide:info" />}
                     >
-                      Copy Link
+                      Details
                     </DropdownItem>
                     <DropdownItem
-                      key="trash"
+                      key="delete-permanently"
                       className="text-danger"
                       color="danger"
-                      startContent={<Icon icon="lucide:trash" />}
+                      startContent={<Icon icon="lucide:trash-x" />}
                     >
-                      Trash
+                      Delete Permanently
                     </DropdownItem>
                   </DropdownMenu>
                 </Dropdown>
@@ -262,4 +273,4 @@ export const FileTable: React.FC<FileTableProps> = ({
       </Table>
     </div>
   );
-};
+}; 

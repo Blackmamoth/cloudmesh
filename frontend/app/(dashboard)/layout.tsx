@@ -31,6 +31,7 @@ export default function RootLayout({
   const navItems = [
     { name: "Dashboard", icon: "lucide:layout-dashboard", path: "/dashboard" },
     { name: "Files", icon: "lucide:folder", path: "/files" },
+    { name: "Trash", icon: "lucide:trash", path: "/trash" },
     { name: "Linked Accounts", icon: "lucide:cloud", path: "/accounts" },
     { name: "Settings", icon: "lucide:settings", path: "/settings" },
   ];
@@ -102,9 +103,6 @@ export default function RootLayout({
 
             {/* Bottom section with avatar dropdown */}
             <div className="p-4 border-t border-divider">
-              <div className="flex items-center justify-between mb-4">
-                <ThemeSwitcher />
-              </div>
 
               <Dropdown placement="top-end">
                 <DropdownTrigger>
@@ -182,7 +180,6 @@ export default function RootLayout({
                 <Button
                   isIconOnly
                   aria-label="Toggle sidebar"
-                  color="default"
                   size="sm"
                   variant="light"
                   onPress={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -194,6 +191,9 @@ export default function RootLayout({
                 </Button>
                 <h1 className="text-xl font-semibold truncate">{title}</h1>
               </NavbarBrand>
+            </NavbarContent>
+            <NavbarContent justify="end">
+              <ThemeSwitcher />
             </NavbarContent>
           </Navbar>
 

@@ -10,15 +10,15 @@ import {
 } from "@heroui/dropdown";
 import { Chip } from "@heroui/chip";
 
-import { FileType, FilterOptions, SortOption, ViewMode } from "@/lib/types";
+import { FileType, TrashFilterOptions, TrashSortOption, ViewMode } from "@/lib/types";
 
-interface FileToolbarProps {
+interface TrashToolbarProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
-  sortOption: SortOption;
-  onSortChange: (option: SortOption) => void;
-  filterOptions: FilterOptions;
-  onFilterChange: (options: FilterOptions) => void;
+  sortOption: TrashSortOption;
+  onSortChange: (option: TrashSortOption) => void;
+  filterOptions: TrashFilterOptions;
+  onFilterChange: (options: TrashFilterOptions) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   selectedCount: number;
@@ -29,7 +29,7 @@ interface FileToolbarProps {
   itemsPerPage: number;
 }
 
-export const FileToolbar: React.FC<FileToolbarProps> = ({
+export const TrashToolbar: React.FC<TrashToolbarProps> = ({
   viewMode,
   onViewModeChange,
   sortOption,
@@ -58,17 +58,24 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
     "other",
   ];
 
-  // Date modified options
+  // Date deleted options
   const dateOptions = [
     { label: "Today", value: "today" },
     { label: "Yesterday", value: "yesterday" },
     { label: "Last 7 days", value: "week" },
     { label: "Last 30 days", value: "month" },
-    { label: "This year", value: "year" },
+  ];
+
+  // Deleted by users (mock data - in real app this would come from props or API)
+  const deletedByUsers = [
+    "John Doe",
+    "Jane Smith", 
+    "Alex Johnson",
+    "Sarah Wilson",
   ];
 
   // Handle filter change
-  const updateFilter = (key: keyof FilterOptions, value: any) => {
+  const updateFilter = (key: keyof TrashFilterOptions, value: any) => {
     onFilterChange({
       ...filterOptions,
       [key]: value,
@@ -103,6 +110,20 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
     }
   };
 
+  // Toggle deleted by filter
+  const toggleDeletedByFilter = (user: string) => {
+    const currentUsers = [...filterOptions.deletedBy];
+
+    if (currentUsers.includes(user)) {
+      updateFilter(
+        "deletedBy",
+        currentUsers.filter((u) => u !== user),
+      );
+    } else {
+      updateFilter("deletedBy", [...currentUsers, user]);
+    }
+  };
+
   // Format file type for display
   const formatFileType = (type: FileType): string => {
     return type.charAt(0).toUpperCase() + type.slice(1);
@@ -130,7 +151,8 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
   const activeFiltersCount =
     filterOptions.provider.length +
     filterOptions.fileType.length +
-    (filterOptions.dateModified ? 1 : 0);
+    filterOptions.deletedBy.length +
+    (filterOptions.dateDeleted ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -140,7 +162,7 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
           <Input
             fullWidth
             isClearable
-            placeholder="Search files..."
+            placeholder="Search deleted files..."
             startContent={
               <Icon className="text-default-400" icon="lucide:search" />
             }
@@ -150,6 +172,28 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
+          {/* Bulk actions for selected items */}
+          {selectedCount > 0 && (
+            <div className="flex gap-2">
+              <Button
+                color="primary"
+                startContent={<Icon icon="lucide:undo-2" />}
+                variant="flat"
+                onPress={() => onBulkAction("restore")}
+              >
+                Restore ({selectedCount})
+              </Button>
+              <Button
+                color="danger"
+                startContent={<Icon icon="lucide:trash-x" />}
+                variant="flat"
+                onPress={() => onBulkAction("delete-permanently")}
+              >
+                Delete Permanently ({selectedCount})
+              </Button>
+            </div>
+          )}
+
           {/* View mode toggle */}
           <ButtonGroup variant="flat">
             <Button
@@ -178,87 +222,24 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                 Sort
               </Button>
             </DropdownTrigger>
-            <DropdownMenu aria-label="Sort options">
-              <DropdownItem
-                key="name-asc"
-                description="Alphabetical A-Z"
-                isSelected={
-                  sortOption.field === "name" && sortOption.direction === "asc"
-                }
-                startContent={<Icon icon="lucide:arrow-up" />}
-                onPress={() =>
-                  onSortChange({ field: "name", direction: "asc" })
-                }
-              >
-                Name
-              </DropdownItem>
-              <DropdownItem
-                key="name-desc"
-                description="Alphabetical Z-A"
-                isSelected={
-                  sortOption.field === "name" && sortOption.direction === "desc"
-                }
-                startContent={<Icon icon="lucide:arrow-down" />}
-                onPress={() =>
-                  onSortChange({ field: "name", direction: "desc" })
-                }
-              >
-                Name
-              </DropdownItem>
-              <DropdownItem
-                key="size-asc"
-                description="Smallest first"
-                isSelected={
-                  sortOption.field === "size" && sortOption.direction === "asc"
-                }
-                startContent={<Icon icon="lucide:arrow-up" />}
-                onPress={() =>
-                  onSortChange({ field: "size", direction: "asc" })
-                }
-              >
-                Size
-              </DropdownItem>
-              <DropdownItem
-                key="size-desc"
-                description="Largest first"
-                isSelected={
-                  sortOption.field === "size" && sortOption.direction === "desc"
-                }
-                startContent={<Icon icon="lucide:arrow-down" />}
-                onPress={() =>
-                  onSortChange({ field: "size", direction: "desc" })
-                }
-              >
-                Size
-              </DropdownItem>
-              <DropdownItem
-                key="date-asc"
-                description="Oldest first"
-                isSelected={
-                  sortOption.field === "modifiedAt" &&
-                  sortOption.direction === "asc"
-                }
-                startContent={<Icon icon="lucide:arrow-up" />}
-                onPress={() =>
-                  onSortChange({ field: "modifiedAt", direction: "asc" })
-                }
-              >
-                Date Modified
-              </DropdownItem>
-              <DropdownItem
-                key="date-desc"
-                description="Newest first"
-                isSelected={
-                  sortOption.field === "modifiedAt" &&
-                  sortOption.direction === "desc"
-                }
-                startContent={<Icon icon="lucide:arrow-down" />}
-                onPress={() =>
-                  onSortChange({ field: "modifiedAt", direction: "desc" })
-                }
-              >
-                Date Modified
-              </DropdownItem>
+            <DropdownMenu
+              aria-label="Sort options"
+              onAction={(key) => {
+                const [field, direction] = (key as string).split('-');
+                onSortChange({
+                  field: field as "name" | "size" | "modifiedAt" | "deletedAt",
+                  direction: direction as "asc" | "desc",
+                });
+              }}
+            >
+              <DropdownItem key="name-asc">Name (A-Z)</DropdownItem>
+              <DropdownItem key="name-desc">Name (Z-A)</DropdownItem>
+              <DropdownItem key="size-asc">Size (Smallest)</DropdownItem>
+              <DropdownItem key="size-desc">Size (Largest)</DropdownItem>
+              <DropdownItem key="deletedAt-desc">Recently Deleted</DropdownItem>
+              <DropdownItem key="deletedAt-asc">Oldest Deleted</DropdownItem>
+              <DropdownItem key="modifiedAt-desc">Last Modified</DropdownItem>
+              <DropdownItem key="modifiedAt-asc">Oldest Modified</DropdownItem>
             </DropdownMenu>
           </Dropdown>
 
@@ -279,7 +260,7 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                 Filter
               </Button>
             </DropdownTrigger>
-            <DropdownMenu aria-label="Filter options" className="min-w-[240px]">
+            <DropdownMenu aria-label="Filter options" className="min-w-[280px]">
               <>
                 <DropdownItem
                   key="provider-header"
@@ -319,7 +300,7 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                 >
                   File Type
                 </DropdownItem>
-                {fileTypes.map((fileType) => (
+                {fileTypes.map((fileType: FileType) => (
                   <DropdownItem
                     key={`type-${fileType}`}
                     endContent={
@@ -327,7 +308,9 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                         <Icon className="text-primary" icon="lucide:check" />
                       )
                     }
-                    startContent={<Icon icon={getFileTypeIcon(fileType)} />}
+                    startContent={
+                      <Icon className="text-lg" icon={getFileTypeIcon(fileType)} />
+                    }
                     onPress={() => toggleFileTypeFilter(fileType)}
                   >
                     {formatFileType(fileType)}
@@ -339,68 +322,60 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                   isReadOnly
                   className="opacity-70 mt-2"
                 >
-                  Date Modified
+                  Date Deleted
                 </DropdownItem>
-                {dateOptions.map((option) => (
+                {dateOptions.map((dateOption) => (
                   <DropdownItem
-                    key={`date-${option.value}`}
+                    key={`date-${dateOption.value}`}
                     endContent={
-                      filterOptions.dateModified === option.value && (
+                      filterOptions.dateDeleted === dateOption.value && (
                         <Icon className="text-primary" icon="lucide:check" />
                       )
                     }
-                    onPress={() =>
-                      updateFilter(
-                        "dateModified",
-                        filterOptions.dateModified === option.value
-                          ? null
-                          : option.value,
-                      )
-                    }
+                    startContent={<Icon className="text-lg" icon="lucide:calendar" />}
+                    onPress={() => updateFilter("dateDeleted", 
+                      filterOptions.dateDeleted === dateOption.value ? null : dateOption.value
+                    )}
                   >
-                    {option.label}
+                    {dateOption.label}
                   </DropdownItem>
                 ))}
 
-                {activeFiltersCount > 0 && (
+                <DropdownItem
+                  key="deletedby-divider"
+                  isReadOnly
+                  className="opacity-70 mt-2"
+                >
+                  Deleted By
+                </DropdownItem>
+                {deletedByUsers.map((user) => (
                   <DropdownItem
-                    key="clear-filters"
-                    className="text-danger"
-                    onPress={() =>
-                      onFilterChange({
-                        provider: [],
-                        fileType: [],
-                        dateModified: null,
-                      })
+                    key={`deletedby-${user}`}
+                    endContent={
+                      filterOptions.deletedBy.includes(user) && (
+                        <Icon className="text-primary" icon="lucide:check" />
+                      )
                     }
+                    startContent={<Icon className="text-lg" icon="lucide:user" />}
+                    onPress={() => toggleDeletedByFilter(user)}
                   >
-                    Clear All Filters
+                    {user}
                   </DropdownItem>
-                )}
+                ))}
               </>
             </DropdownMenu>
           </Dropdown>
 
-          {/* Bulk actions (only shown when files are selected) */}
-          {selectedCount > 0 && (
-            <div className="flex items-center gap-2">
-              <Button
-                color="primary"
-                startContent={<Icon icon="lucide:download" />}
-                variant="flat"
-                onPress={() => onBulkAction("download")}
-              >
-                Download
-              </Button>
-              <Button
-                color="danger"
-                startContent={<Icon icon="lucide:trash" />}
-                variant="flat"
-                onPress={() => onBulkAction("trash")}
-              >
-                Trash
-              </Button>
-            </div>
+          {/* Empty trash button */}
+          {totalCount > 0 && (
+            <Button
+              color="danger"
+              startContent={<Icon icon="lucide:trash-x" />}
+              variant="bordered"
+              onPress={() => onBulkAction("empty-trash")}
+            >
+              Empty Trash
+            </Button>
           )}
         </div>
       </div>
@@ -441,32 +416,43 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
             </Chip>
           ))}
 
-          {filterOptions.dateModified && (
+          {filterOptions.dateDeleted && (
             <Chip
               key="filter-date"
               startContent={<Icon className="text-sm" icon="lucide:calendar" />}
               variant="flat"
-              onClose={() => updateFilter("dateModified", null)}
+              onClose={() => updateFilter("dateDeleted", null)}
             >
               {
-                dateOptions.find((d) => d.value === filterOptions.dateModified)
+                dateOptions.find((d) => d.value === filterOptions.dateDeleted)
                   ?.label
               }
             </Chip>
           )}
+
+          {filterOptions.deletedBy.map((user) => (
+            <Chip
+              key={`filter-deletedby-${user}`}
+              startContent={<Icon className="text-sm" icon="lucide:user" />}
+              variant="flat"
+              onClose={() => toggleDeletedByFilter(user)}
+            >
+              {user}
+            </Chip>
+          ))}
         </div>
       )}
 
-      {/* File count info */}
+      {/* Item count info */}
       <div className="text-sm text-foreground-500">
         {selectedCount > 0 ? (
           <span>
-            {selectedCount} of {totalCount} files selected
+            {selectedCount} of {totalCount} items selected
           </span>
         ) : (
-          <span>{totalCount} files</span>
+          <span>{totalCount} items in trash</span>
         )}
       </div>
     </div>
   );
-};
+}; 
