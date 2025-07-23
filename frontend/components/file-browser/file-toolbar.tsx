@@ -396,9 +396,9 @@ export const FileToolbar: React.FC<FileToolbarProps> = ({
                 color="danger"
                 startContent={<Icon icon="lucide:trash" />}
                 variant="flat"
-                onPress={() => onBulkAction("delete")}
+                onPress={() => onBulkAction("trash")}
               >
-                Delete
+                Trash
               </Button>
             </div>
           )}

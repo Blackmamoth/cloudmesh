@@ -246,12 +246,12 @@ export const FileTable: React.FC<FileTableProps> = ({
                       Copy Link
                     </DropdownItem>
                     <DropdownItem
-                      key="delete"
+                      key="trash"
                       className="text-danger"
                       color="danger"
                       startContent={<Icon icon="lucide:trash" />}
                     >
-                      Delete
+                      Trash
                     </DropdownItem>
                   </DropdownMenu>
                 </Dropdown>
