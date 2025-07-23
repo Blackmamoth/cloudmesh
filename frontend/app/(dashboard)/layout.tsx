@@ -31,6 +31,7 @@ export default function RootLayout({
   const navItems = [
     { name: "Dashboard", icon: "lucide:layout-dashboard", path: "/dashboard" },
     { name: "Files", icon: "lucide:folder", path: "/files" },
+    { name: "Trash", icon: "lucide:trash", path: "/trash" },
     { name: "Linked Accounts", icon: "lucide:cloud", path: "/accounts" },
     { name: "Settings", icon: "lucide:settings", path: "/settings" },
   ];
