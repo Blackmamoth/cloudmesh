@@ -82,13 +82,30 @@ export const SmartActionsCard = () => {
   };
 
   const handleFileSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    setSelectedFiles(files);
+    const newFiles = Array.from(event.target.files || []);
+    
+    // Filter out files that are already selected (based on name and size)
+    const filteredNewFiles = newFiles.filter(newFile => 
+      !selectedFiles.some(existingFile => 
+        existingFile.name === newFile.name && existingFile.size === newFile.size
+      )
+    );
+    
+    // Combine existing files with new files
+    const allFiles = [...selectedFiles, ...filteredNewFiles];
+    setSelectedFiles(allFiles);
     
     const maxFileSize = 50 * 1024 * 1024; // 50MB per file
     
-    // Initialize progress tracking with size validation
-    const progress: UploadProgress[] = files.map(file => {
+    // Create progress tracking for all files
+    const allProgress: UploadProgress[] = allFiles.map(file => {
+      // Check if this file already has progress tracking
+      const existingProgress = uploadProgress.find(p => p.fileName === file.name);
+      if (existingProgress) {
+        return existingProgress;
+      }
+      
+      // Create new progress tracking for new files
       const sizeError = file.size > maxFileSize;
       return {
         fileName: file.name,
@@ -98,7 +115,23 @@ export const SmartActionsCard = () => {
         error: sizeError ? `File exceeds 50MB limit (${formatFileSize(file.size)})` : undefined
       };
     });
-    setUploadProgress(progress);
+    setUploadProgress(allProgress);
+    
+    // Clear the input value so the same file can be selected again if removed and re-added
+    event.target.value = '';
+  };
+
+  const handleRemoveFile = (index: number) => {
+    const newFiles = selectedFiles.filter((_, i) => i !== index);
+    setSelectedFiles(newFiles);
+    
+    const newProgress = uploadProgress.filter((_, i) => i !== index);
+    setUploadProgress(newProgress);
+  };
+
+  const handleClearAllFiles = () => {
+    setSelectedFiles([]);
+    setUploadProgress([]);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -394,6 +427,16 @@ export const SmartActionsCard = () => {
                                Exceeds total limit
                              </Chip>
                            )}
+                           {!isUploading && selectedFiles.length > 0 && (
+                             <Button
+                               size="sm"
+                               variant="flat"
+                               color="danger"
+                               onPress={handleClearAllFiles}
+                             >
+                               Clear All
+                             </Button>
+                           )}
                         </div>
                       </div>
                       
@@ -412,16 +455,30 @@ export const SmartActionsCard = () => {
                                     </p>
                                   </div>
                                 </div>
-                                <Chip
-                                  color={getStatusColor(progress?.status || 'pending')}
-                                  size="sm"
-                                  variant="flat"
-                                >
-                                  {progress?.status === 'uploading' && 'Uploading'}
-                                  {progress?.status === 'completed' && 'Done'}
-                                  {progress?.status === 'error' && 'Error'}
-                                  {progress?.status === 'pending' && 'Ready'}
-                                </Chip>
+                                <div className="flex items-center gap-2">
+                                  <Chip
+                                    color={getStatusColor(progress?.status || 'pending')}
+                                    size="sm"
+                                    variant="flat"
+                                  >
+                                    {progress?.status === 'uploading' && 'Uploading'}
+                                    {progress?.status === 'completed' && 'Done'}
+                                    {progress?.status === 'error' && 'Error'}
+                                    {progress?.status === 'pending' && 'Ready'}
+                                  </Chip>
+                                  {!isUploading && (
+                                    <Button
+                                      isIconOnly
+                                      size="sm"
+                                      variant="flat"
+                                      color="danger"
+                                      onPress={() => handleRemoveFile(index)}
+                                      className="min-w-unit-6 w-unit-6 h-unit-6"
+                                    >
+                                      <Icon icon="lucide:x" className="text-sm" />
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                               
                               {progress?.status === 'uploading' && (
