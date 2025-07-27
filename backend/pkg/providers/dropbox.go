@@ -506,6 +506,10 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 		return err
 	}
 
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", DROPBOX_PROVIDER_NAME, accountID.String())); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+	}
+
 	return nil
 }
 
@@ -671,10 +675,22 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID 
 		return err
 	}
 
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", DROPBOX_PROVIDER_NAME, accountID.String())); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+	}
+
 	return nil
 }
 
 func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
+
+	searchCacheKey := utils.BuildSearchCacheKey(string(account.Provider), account.ID.String(), searchText)
+
+	cachedFileIds, err := utils.GetCachedProviderFileIDs(ctx, searchCacheKey)
+	if err == nil {
+		return cachedFileIds, nil
+	}
+
 	accessToken, err := utils.Decrypt(account.AccessToken)
 	if err != nil {
 		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
@@ -705,6 +721,12 @@ func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string
 		}
 
 		cursor = newCursor
+	}
+
+	expiryTime := config.CacheConfig.DEFAULT_DROPBOX_CACHE_EXPIRY
+
+	if err := utils.CacheProviderFileIDs(ctx, searchCacheKey, providerFileIDs, time.Duration(expiryTime)*time.Minute); err != nil {
+		config.LOGGER.Error("failed to cache search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", account.ID.String()), zap.Error(err))
 	}
 
 	return providerFileIDs, nil

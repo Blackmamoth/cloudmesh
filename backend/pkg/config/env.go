@@ -40,6 +40,11 @@ type RedisConfiguration struct {
 	DB   int    `envconfig:"REDIS_DB"                   default:"0"`
 }
 
+type CacheConfiguration struct {
+	DEFAULT_GOOGLE_CACHE_EXPIRY  int `envconfig:"GOOGLE_CACHE_EXPIRY" default:"15"`
+	DEFAULT_DROPBOX_CACHE_EXPIRY int `envconfig:"DROPBOX_CACHE_EXPIRY" default:"30"`
+}
+
 type AsynqConfiguration struct {
 	CONCURRENCY        int `envconfig:"ASYNQ_CONCURRENCY" default:"10"`
 	FILE_SYNC_INTERVAL int `envconfig:"ASYNQ_FILE_SYNC_INTERVAL" default:"30"`
@@ -70,6 +75,7 @@ var (
 	AESConfig         AESConfiguration
 	PostgresConfig    PostgresConfiguration
 	RedisConfig       RedisConfiguration
+	CacheConfig       CacheConfiguration
 	OAuthConfig       OAuthConfiguration
 	CookieStoreConfig CookieStoreConfiguration
 	AsynqConfig       AsynqConfiguration
@@ -95,6 +101,10 @@ func loadEnv() {
 	}
 
 	if err := envconfig.Process("REDIS_", &RedisConfig); err != nil {
+		log.Fatalf("An error occured while loading environment variables: %v", err)
+	}
+
+	if err := envconfig.Process("", &CacheConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
 
