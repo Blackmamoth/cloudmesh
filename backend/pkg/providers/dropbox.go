@@ -94,6 +94,23 @@ type DropboxFileMetadata struct {
 	IsDownloadable bool      `json:"is_downloadable"`
 }
 
+type DropboxSearchMatchResult struct {
+	HighLightSpans []map[string]any `json:"highlight_spans"`
+	MatchType      struct {
+		Tag string `json:".tag"`
+	}
+	MetaData struct {
+		Tag      string `json:".tag"`
+		MetaData DropboxFileMetadata
+	}
+}
+
+type DropboxSearchResponse struct {
+	HasMore bool                       `json:"has_more"`
+	Cursor  string                     `json:"cursor"`
+	Matches []DropboxSearchMatchResult `json:"matches"`
+}
+
 type DeleteFileResponse struct {
 	Metadata DropboxFileMetadata `json:"metadata"`
 }
@@ -107,6 +124,8 @@ const (
 	DROPBOX_UPLOAD_ENDPOINT           = "https://content.dropboxapi.com/2/files/upload"
 	DROPBOX_DELETE_V2_ENDPOINT        = "https://api.dropboxapi.com/2/files/delete_v2"
 	DROPBOX_PERMANENT_DELETE_ENDPOINT = "https://api.dropboxapi.com/2/files/permanently_delete"
+	DROPBOX_SEARCH_ENDPOINT           = "https://api.dropboxapi.com/2/files/search_v2"
+	DROPBOX_SEARCH_CONTINUE_ENDPOINT  = "https://api.dropboxapi.com/2/files/search/continue_v2"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -480,8 +499,6 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 
 	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
 
-	fmt.Println(files)
-
 	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
 
 	if err != nil {
@@ -657,6 +674,131 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID 
 	return nil
 }
 
+func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	providerFileIDs := []string{}
+
+	cursor := ""
+
+	for {
+		fileIds, newCursor, err := p.searchContentResults(ctx, conn, account.ID, searchText, accessToken, refreshToken, cursor)
+		if err != nil {
+			config.LOGGER.Error("dropbox request for content search failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			return nil, err
+		}
+
+		providerFileIDs = append(providerFileIDs, fileIds...)
+
+		if newCursor == "" {
+			break
+		}
+
+		cursor = newCursor
+	}
+
+	return providerFileIDs, nil
+}
+
+func (p *DropboxProvider) searchContentResults(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, searchText, accessToken, refreshToken, cursor string) ([]string, string, error) {
+
+	reqBody := map[string]any{
+		"match_field_options": map[string]bool{
+			"include_highlights": false,
+		},
+		"options": map[string]any{
+			"file_status":   "active",
+			"filename_only": false,
+			"max_results":   1000,
+			"path":          "/",
+		},
+		"query": searchText,
+	}
+
+	reqUrl := DROPBOX_SEARCH_ENDPOINT
+
+	if cursor != "" {
+		reqBody = map[string]any{
+			"cursor": cursor,
+		}
+
+		reqUrl = DROPBOX_SEARCH_CONTINUE_ENDPOINT
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		config.LOGGER.Error("failed to marshal request body", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, "", err
+	}
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPost, reqUrl, bytes.NewReader(jsonBody))
+	if err != nil {
+		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, "", err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox permanent delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read http response body for dropbox search request", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, "", err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		config.LOGGER.Warn("access token expired, attempting to renew", zap.String("provider", DROPBOX_PROVIDER_NAME))
+
+		_, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+		if err != nil {
+			return nil, "", err
+		}
+
+		return nil, "", fmt.Errorf("request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request")
+	}
+
+	if res.StatusCode != http.StatusOK {
+		config.LOGGER.Error("http request for dropbox sync task did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		return nil, "", fmt.Errorf("%s", string(body[:]))
+	}
+
+	var dropboxResponse DropboxSearchResponse
+
+	err = json.Unmarshal(body, &dropboxResponse)
+
+	if err != nil {
+		config.LOGGER.Error("failed to unmarshal request body for http dropbox search request", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, "", err
+	}
+
+	providerFileIds := []string{}
+
+	for _, file := range dropboxResponse.Matches {
+		providerFileIds = append(providerFileIds, file.MetaData.MetaData.ID)
+	}
+
+	return providerFileIds, dropboxResponse.Cursor, nil
+}
+
 func (p *DropboxProvider) moveToTrash(accessToken, filePath string) error {
 	reqBody := fmt.Appendf(nil, "{\"path\": \"%s\"}", filePath)
 
@@ -742,9 +884,6 @@ func (p *DropboxProvider) permanentlyDeleteFile(accessToken, filePath string) er
 func (p *DropboxProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams, cursor string) (int64, error) {
 
 	var insertedRowCount int64
-
-	fmt.Println("here")
-	fmt.Println(files)
 
 	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
 		qx := queries.WithTx(tx)

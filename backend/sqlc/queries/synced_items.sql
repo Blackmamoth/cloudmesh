@@ -21,12 +21,18 @@ SELECT synced_items.id,
        linked_account.provider
 FROM   synced_items
        JOIN linked_account
-       ON linked_account.id = synced_items.account_id
+         ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = @user_id
        AND (NULLIF(@parent_folder, '') IS NULL OR synced_items.parent_folder = @parent_folder)
        AND (NULLIF(@provider, '') IS NULL OR linked_account.provider = @provider::provider_enum)
-       AND (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%')
-       ORDER BY 
+       AND (
+         CASE
+           WHEN @provider_file_ids::TEXT[] IS NULL OR COALESCE(array_length(@provider_file_ids::TEXT[], 1), 0) = 0
+           THEN (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY(@provider_file_ids::TEXT[])
+         END
+       )
+ORDER BY
        CASE
            WHEN @sort_on = 'file_name' AND @sort_by = 'asc' THEN synced_items.name
            ELSE NULL -- Explicitly return NULL when not sorting by this
@@ -52,7 +58,7 @@ WHERE  linked_account.user_id = @user_id
            ELSE NULL
        END DESC,
        synced_items.modified_time DESC
-       LIMIT @limit_by OFFSET @offset_by;
+LIMIT @limit_by OFFSET @offset_by;
 
 -- name: CountFilesWithFilters :one
 SELECT COUNT(*)
@@ -62,7 +68,14 @@ FROM   synced_items
 WHERE  linked_account.user_id = @user_id
        AND (NULLIF(@parent_folder, '') IS NULL OR synced_items.parent_folder = @parent_folder)
        AND (NULLIF(@provider, '') IS NULL OR linked_account.provider = @provider::provider_enum)
-       AND (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%');
+       AND (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%')
+       AND (
+         CASE
+           WHEN @provider_file_ids::TEXT[] IS NULL OR COALESCE(array_length(@provider_file_ids::TEXT[], 1), 0) = 0
+           THEN (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY(@provider_file_ids::TEXT[])
+         END
+);
 
 -- name: DeleteConflictingItems :exec
 DELETE FROM synced_items WHERE provider_file_id = ANY(@provider_file_ids::TEXT[]) AND account_id = @account_id;

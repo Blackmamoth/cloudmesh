@@ -155,6 +155,42 @@ func (q *Queries) GetLinkedAccountsByUserID(ctx context.Context, userID string) 
 	return items, nil
 }
 
+const getUserAccounts = `-- name: GetUserAccounts :many
+SELECT id, access_token, refresh_token, provider FROM linked_account WHERE user_id = $1
+`
+
+type GetUserAccountsRow struct {
+	ID           pgtype.UUID  `json:"id"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	Provider     ProviderEnum `json:"provider"`
+}
+
+func (q *Queries) GetUserAccounts(ctx context.Context, userID string) ([]GetUserAccountsRow, error) {
+	rows, err := q.db.Query(ctx, getUserAccounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUserAccountsRow{}
+	for rows.Next() {
+		var i GetUserAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.Provider,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAuthTokens = `-- name: UpdateAuthTokens :exec
 UPDATE linked_account SET access_token = $1, refresh_token = $2, token_type = $3, expiry = $4, updated_at = NOW() WHERE id = $5
 `

@@ -34,13 +34,14 @@ type FilesHandler struct {
 }
 
 type GetFilesValidation struct {
-	Provider     string `validate:"omitempty,oneof=google dropbox" json:"provider"`
-	ParentFolder string `validate:"omitempty" json:"parent_folder"`
-	Search       string `validate:"omitempty" json:"search"`
-	SortOn       string `validate:"omitempty" json:"sort_on"`
-	SortBy       string `validate:"omitempty" json:"sort_by"`
-	Limit        int32  `validate:"omitempty" json:"limit"`
-	Offset       int32  `validate:"omitempty" json:"offset"`
+	Provider      string `validate:"omitempty,oneof=google dropbox" json:"provider"`
+	ParentFolder  string `validate:"omitempty" json:"parent_folder"`
+	Search        string `validate:"omitempty" json:"search"`
+	SortOn        string `validate:"omitempty" json:"sort_on"`
+	SortBy        string `validate:"omitempty" json:"sort_by"`
+	Limit         int32  `validate:"omitempty" json:"limit"`
+	Offset        int32  `validate:"omitempty" json:"offset"`
+	ContentSearch bool   `validate:"omitempty" json:"content_search"`
 }
 
 type UploadFilesValidation struct {
@@ -133,17 +134,42 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.Context().Value(middlewares.UserKey).(string)
 
+	providerFileIDs := []string{}
+
 	queries := repository.New(conn)
 
+	if payload.ContentSearch && payload.Search != "" {
+		accounts, err := queries.GetUserAccounts(r.Context(), userID)
+		if err != nil {
+			config.LOGGER.Error("failed to fetch user accounts from db", zap.Error(err), zap.String("user_id", userID))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+			return
+		}
+
+		for _, account := range accounts {
+			provider := providers.OAuthProviders[string(account.Provider)]
+
+			fileIDs, err := provider.SearchByContent(r.Context(), payload.Search, account, conn, queries)
+			if err != nil {
+				config.LOGGER.Error("failed to search for files by content", zap.String("provider", string(account.Provider)), zap.String("user_id", userID), zap.String("account_id", account.ID.String()), zap.Error(err))
+				utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+				return
+			}
+
+			providerFileIDs = append(providerFileIDs, fileIDs...)
+		}
+	}
+
 	files, err := queries.GetSyncedItems(r.Context(), repository.GetSyncedItemsParams{
-		UserID:       userID,
-		ParentFolder: db.PGTextField(payload.ParentFolder),
-		Provider:     repository.ProviderEnum(payload.Provider),
-		SortOn:       payload.SortOn,
-		SortBy:       payload.SortBy,
-		Search:       payload.Search,
-		LimitBy:      payload.Limit,
-		OffsetBy:     payload.Offset,
+		UserID:          userID,
+		ParentFolder:    db.PGTextField(payload.ParentFolder),
+		Provider:        repository.ProviderEnum(payload.Provider),
+		SortOn:          payload.SortOn,
+		SortBy:          payload.SortBy,
+		Search:          payload.Search,
+		LimitBy:         payload.Limit,
+		OffsetBy:        payload.Offset,
+		ProviderFileIds: providerFileIDs,
 	})
 
 	if err != nil {
@@ -167,6 +193,7 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 
 	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
 		"files":       files,
+		"file_count":  len(files),
 		"total_files": totalFileCount,
 	})
 
@@ -239,8 +266,6 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 	}
 
 	err = provider.UploadFiles(r.Context(), accountID, conn, queries, authTokens, uploadedFiles)
-
-	fmt.Println(err)
 
 	if err != nil {
 		config.LOGGER.Error("failed to upload files", zap.Error(err), zap.String("user_id", userID), zap.String("account_id", accountID.String()))

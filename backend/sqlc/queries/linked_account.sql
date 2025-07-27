@@ -17,6 +17,9 @@ SELECT last_synced_at, sync_page_token FROM linked_account WHERE id = @account_i
 -- name: GetAccountByProviderID :one
 SELECT id FROM linked_account WHERE user_id = @user_id AND provider = @provider AND provider_user_id = @provider_user_id LIMIT 1;
 
+-- name: GetUserAccounts :many
+SELECT id, access_token, refresh_token, provider FROM linked_account WHERE user_id = @user_id;
+
 -- name: GetAuthTokens :one
 SELECT provider, access_token, refresh_token FROM linked_account WHERE
 user_id = @user_id AND id = @account_id;
