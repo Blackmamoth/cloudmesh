@@ -9,6 +9,7 @@ import (
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/providers"
+	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
@@ -127,6 +128,10 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 		processAt := time.Now().Add(time.Duration(config.AsynqConfig.FILE_SYNC_INTERVAL) * time.Minute)
 
 		asynqclient.Enqueue(newTask, asynq.ProcessAt(processAt), asynq.Unique(6*time.Minute))
+	}
+
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", authToken.Provider, p.AccountID)); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", string(authToken.Provider)), zap.String("account_id", p.AccountID), zap.Error(err))
 	}
 
 	config.LOGGER.Info("worker completed synching files to the db", zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))

@@ -41,13 +41,21 @@ WHERE  linked_account.user_id = $1
        AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
        AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
        AND (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
+       AND (
+         CASE
+           WHEN $5::TEXT[] IS NULL OR COALESCE(array_length($5::TEXT[], 1), 0) = 0
+           THEN (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY($5::TEXT[])
+         END
+)
 `
 
 type CountFilesWithFiltersParams struct {
-	UserID       string      `json:"user_id"`
-	ParentFolder interface{} `json:"parent_folder"`
-	Provider     interface{} `json:"provider"`
-	Search       interface{} `json:"search"`
+	UserID          string      `json:"user_id"`
+	ParentFolder    interface{} `json:"parent_folder"`
+	Provider        interface{} `json:"provider"`
+	Search          interface{} `json:"search"`
+	ProviderFileIds []string    `json:"provider_file_ids"`
 }
 
 func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithFiltersParams) (int64, error) {
@@ -56,6 +64,7 @@ func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithF
 		arg.ParentFolder,
 		arg.Provider,
 		arg.Search,
+		arg.ProviderFileIds,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -152,49 +161,56 @@ SELECT synced_items.id,
        linked_account.provider
 FROM   synced_items
        JOIN linked_account
-       ON linked_account.id = synced_items.account_id
+         ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = $1
        AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
        AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
-       AND (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
-       ORDER BY 
+       AND (
+         CASE
+           WHEN $4::TEXT[] IS NULL OR COALESCE(array_length($4::TEXT[], 1), 0) = 0
+           THEN (NULLIF($5, '') IS NULL OR synced_items.name ILIKE '%' || $5::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY($4::TEXT[])
+         END
+       )
+ORDER BY
        CASE
-           WHEN $5 = 'file_name' AND $6 = 'asc' THEN synced_items.name
+           WHEN $6 = 'file_name' AND $7 = 'asc' THEN synced_items.name
            ELSE NULL -- Explicitly return NULL when not sorting by this
        END ASC,
        CASE
-           WHEN $5 = 'file_name' AND $6 = 'desc' THEN synced_items.name
+           WHEN $6 = 'file_name' AND $7 = 'desc' THEN synced_items.name
            ELSE NULL
        END DESC,
        CASE
-           WHEN $5 = 'size' AND $6 = 'asc' THEN synced_items.size
+           WHEN $6 = 'size' AND $7 = 'asc' THEN synced_items.size
            ELSE NULL
        END ASC,
        CASE
-           WHEN $5 = 'size' AND $6 = 'desc' THEN synced_items.size
+           WHEN $6 = 'size' AND $7 = 'desc' THEN synced_items.size
            ELSE NULL
        END DESC,
        CASE
-           WHEN $5 = 'modified_time' AND $6 = 'asc' THEN synced_items.modified_time::TIMESTAMPTZ
+           WHEN $6 = 'modified_time' AND $7 = 'asc' THEN synced_items.modified_time::TIMESTAMPTZ
            ELSE NULL
        END ASC,
        CASE
-           WHEN $5 = 'modified_time' AND $6 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
+           WHEN $6 = 'modified_time' AND $7 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
            ELSE NULL
        END DESC,
        synced_items.modified_time DESC
-       LIMIT $8 OFFSET $7
+LIMIT $9 OFFSET $8
 `
 
 type GetSyncedItemsParams struct {
-	UserID       string      `json:"user_id"`
-	ParentFolder interface{} `json:"parent_folder"`
-	Provider     interface{} `json:"provider"`
-	Search       interface{} `json:"search"`
-	SortOn       interface{} `json:"sort_on"`
-	SortBy       interface{} `json:"sort_by"`
-	OffsetBy     int32       `json:"offset_by"`
-	LimitBy      int32       `json:"limit_by"`
+	UserID          string      `json:"user_id"`
+	ParentFolder    interface{} `json:"parent_folder"`
+	Provider        interface{} `json:"provider"`
+	ProviderFileIds []string    `json:"provider_file_ids"`
+	Search          interface{} `json:"search"`
+	SortOn          interface{} `json:"sort_on"`
+	SortBy          interface{} `json:"sort_by"`
+	OffsetBy        int32       `json:"offset_by"`
+	LimitBy         int32       `json:"limit_by"`
 }
 
 type GetSyncedItemsRow struct {
@@ -218,6 +234,7 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 		arg.UserID,
 		arg.ParentFolder,
 		arg.Provider,
+		arg.ProviderFileIds,
 		arg.Search,
 		arg.SortOn,
 		arg.SortBy,

@@ -149,7 +149,7 @@ func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store 
 }
 
 func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error) {
-	httpClient := p.getHTTPClient(token.AccessToken, token.RefreshToken)
+	httpClient := p.GetHTTPClient(token.AccessToken, token.RefreshToken)
 	svc, err := oauth2Google.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
@@ -187,7 +187,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 		return err
 	}
 
-	httpClient := p.getHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
@@ -235,7 +235,7 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 						return err
 					}
 
-					httpClient = p.getHTTPClient(newAccessToken, refreshToken)
+					httpClient = p.GetHTTPClient(newAccessToken, refreshToken)
 					driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
 					if err != nil {
 						config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
@@ -328,7 +328,7 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 	return googleAuthResponse.AccessToken, googleAuthResponse.ExpiresIn, nil
 }
 
-func (p *GoogleProvider) getHTTPClient(accessToken, refreshToken string) *http.Client {
+func (p *GoogleProvider) GetHTTPClient(accessToken, refreshToken string) *http.Client {
 	token := &oauth2.Token{AccessToken: accessToken, RefreshToken: refreshToken}
 
 	tokenSource := p.Config.TokenSource(context.Background(), token)
@@ -352,7 +352,7 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 		return err
 	}
 
-	httpClient := p.getHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
@@ -399,6 +399,10 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 		return err
 	}
 
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", GOOGLE_PROVIDER_NAME, accountID.String())); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+	}
+
 	return nil
 }
 
@@ -415,7 +419,7 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 		return err
 	}
 
-	httpClient := p.getHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
@@ -435,7 +439,6 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			fmt.Println(f.ProviderFileID)
 			if err := p.moveToTrash(driveService, f.ProviderFileID); err != nil {
 				return err
 			}
@@ -483,7 +486,7 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 		return err
 	}
 
-	httpClient := p.getHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
@@ -503,7 +506,6 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			fmt.Println(f.ProviderFileID)
 			if err := p.permanentlyDeleteFile(driveService, f.ProviderFileID); err != nil {
 				return err
 			}
@@ -535,7 +537,96 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 		return err
 	}
 
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", GOOGLE_PROVIDER_NAME, accountID.String())); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+	}
+
 	return nil
+}
+
+func (p *GoogleProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
+
+	searchCacheKey := utils.BuildSearchCacheKey(string(account.Provider), account.ID.String(), searchText)
+
+	cachedFileIds, err := utils.GetCachedProviderFileIDs(ctx, searchCacheKey)
+	if err == nil {
+		return cachedFileIds, nil
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	var providerFileIDs []string
+
+	pageToken := ""
+
+	query := fmt.Sprintf("fullText contains '%s'", searchText)
+
+	for {
+		fileList, err := driveService.Files.
+			List().
+			Q(query).
+			Fields("files(id)").
+			PageToken(pageToken).
+			PageSize(1000).
+			Do()
+
+		if gErr, ok := err.(*googleapi.Error); ok {
+			if gErr.Code == http.StatusUnauthorized {
+				newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, account.ID, refreshToken)
+
+				if err != nil {
+					return nil, err
+				}
+
+				httpClient = p.GetHTTPClient(newAccessToken, refreshToken)
+				driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
+				if err != nil {
+					config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+					return nil, err
+				}
+
+				continue
+			}
+		}
+
+		for _, file := range fileList.Files {
+			providerFileIDs = append(providerFileIDs, file.Id)
+		}
+
+		if fileList.NextPageToken == "" {
+			break
+		}
+
+		pageToken = fileList.NextPageToken
+
+	}
+
+	expiryTime := config.CacheConfig.DEFAULT_GOOGLE_CACHE_EXPIRY
+
+	if err := utils.CacheProviderFileIDs(ctx, searchCacheKey, providerFileIDs, time.Duration(expiryTime)*time.Minute); err != nil {
+		config.LOGGER.Error("failed to cache search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", account.ID.String()), zap.Error(err))
+	}
+
+	return providerFileIDs, nil
 }
 
 func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.UploadedFile) (*drive.File, error) {
