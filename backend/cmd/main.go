@@ -10,7 +10,11 @@ import (
 func main() {
 	defer config.LOGGER.Sync()
 
-	apiServer := api.NewAPIServer(config.APIConfig.HOST, config.APIConfig.PORT, db.ConnPool)
+	_, connPool := db.GetPGClient()
+
+	redisClient := db.GetRedisClient()
+
+	apiServer := api.NewAPIServer(config.APIConfig.HOST, config.APIConfig.PORT, connPool, redisClient)
 
 	if err := apiServer.Run(); err != nil {
 		config.LOGGER.Fatal("Application terminated", zap.Error(err))

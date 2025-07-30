@@ -2,7 +2,7 @@
 
 DB_URL = "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DBNAME)?sslmode=$(POSTGRES_SSLMODE)"
 
-MIGRATION_DIR = "./sqlc/migrations"
+MIGRATION_DIR = "./backend/sqlc/migrations"
 
 migration:
 	@goose -dir $(MIGRATION_DIR) create $(filter-out $@,$(MAKECMDGOALS)) sql

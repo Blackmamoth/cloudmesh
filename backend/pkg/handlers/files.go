@@ -239,7 +239,7 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	conn, err := db.ConnPool.Acquire(r.Context())
+	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -307,7 +307,7 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 		fileIds = append(fileIds, *fileUUID)
 	}
 
-	conn, err := db.ConnPool.Acquire(r.Context())
+	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -390,7 +390,7 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 		fileIds = append(fileIds, *fileUUID)
 	}
 
-	conn, err := db.ConnPool.Acquire(r.Context())
+	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))

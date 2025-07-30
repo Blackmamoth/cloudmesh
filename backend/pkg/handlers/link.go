@@ -28,7 +28,8 @@ import (
 )
 
 type LinkHandler struct {
-	connPool *pgxpool.Pool
+	connPool    *pgxpool.Pool
+	redisClient *redis.Client
 }
 
 type OAuthState struct {
@@ -60,9 +61,10 @@ func init() {
 	}
 }
 
-func NewLinkHandler(connPool *pgxpool.Pool) *LinkHandler {
+func NewLinkHandler(connPool *pgxpool.Pool, redisClient *redis.Client) *LinkHandler {
 	return &LinkHandler{
-		connPool: connPool,
+		connPool:    connPool,
+		redisClient: redisClient,
 	}
 }
 
@@ -264,7 +266,7 @@ func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
 
 func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
 	key := fmt.Sprintf("link-nonce:%s", nonce)
-	val, err := db.RedisClient.Get(ctx, key).Result()
+	val, err := h.redisClient.Get(ctx, key).Result()
 
 	if err != nil {
 		if err == redis.Nil {
@@ -278,7 +280,7 @@ func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
 		return fmt.Errorf("nonce mismatch")
 	}
 
-	if delErr := db.RedisClient.Del(ctx, key).Err(); delErr != nil {
+	if delErr := h.redisClient.Del(ctx, key).Err(); delErr != nil {
 		config.LOGGER.Warn("failed to delete used nonce", zap.Error(delErr))
 	}
 
