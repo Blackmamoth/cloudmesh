@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -15,28 +16,33 @@ import (
 var (
 	PoolConfig *pgxpool.Config
 	ConnPool   *pgxpool.Pool
+	pgOnce     sync.Once
 )
 
-func init() {
-	poolConfig, err := connectPostgres()
-	if err != nil {
-		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
-	}
+func GetPGClient() (*pgxpool.Config, *pgxpool.Pool) {
+	pgOnce.Do(func() {
+		poolConfig, err := connectPostgres()
+		if err != nil {
+			config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
+		}
 
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	if err != nil {
-		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
-	}
+		pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+		if err != nil {
+			config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
+		}
 
-	if err := pingPostgresConnection(pool); err != nil {
-		config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
-	}
+		if err := pingPostgresConnection(pool); err != nil {
+			config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
+		}
 
-	config.LOGGER.Info("Application connected to PostgreSQL Server")
+		config.LOGGER.Info("Application connected to PostgreSQL Server")
 
-	PoolConfig = poolConfig
+		PoolConfig = poolConfig
 
-	ConnPool = pool
+		ConnPool = pool
+	})
+
+	return PoolConfig, ConnPool
 }
 
 func pingPostgresConnection(connPool *pgxpool.Pool) error {

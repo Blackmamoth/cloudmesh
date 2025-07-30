@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
-	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +16,8 @@ import (
 )
 
 type AuthMiddleware struct {
-	connPool *pgxpool.Pool
+	connPool    *pgxpool.Pool
+	redisClient *redis.Client
 }
 
 type userKey struct{}
@@ -30,9 +30,10 @@ var (
 	ErrUnexpected   = errors.New("an unexpected error occured, please try again later")
 )
 
-func NewAuthMiddleware(connPool *pgxpool.Pool) *AuthMiddleware {
+func NewAuthMiddleware(connPool *pgxpool.Pool, redisClient *redis.Client) *AuthMiddleware {
 	return &AuthMiddleware{
-		connPool: connPool,
+		connPool:    connPool,
+		redisClient: redisClient,
 	}
 }
 
@@ -54,7 +55,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 		}
 		defer conn.Release()
 
-		publicKeyJWKCache := db.RedisClient.Get(r.Context(), "public_key_jwk")
+		publicKeyJWKCache := m.redisClient.Get(r.Context(), "public_key_jwk")
 		if publicKeyJWKCache.Err() != nil {
 			if publicKeyJWKCache.Err() != redis.Nil {
 				config.LOGGER.Warn("could not fetch public key from redis cache", zap.Error(err))
@@ -67,7 +68,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 				return
 			}
 
-			db.RedisClient.Set(r.Context(), "public_key_jwk", publicKeyJWK, time.Hour)
+			m.redisClient.Set(r.Context(), "public_key_jwk", publicKeyJWK, time.Hour)
 		} else {
 			publicKeyJWK = publicKeyJWKCache.Val()
 		}

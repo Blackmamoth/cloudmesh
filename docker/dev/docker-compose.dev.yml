@@ -1,43 +1,43 @@
 services:
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ../../backend
+      dockerfile: ../docker/dev/Dockerfile.dev
     restart: always
     ports:
       - 8080:8080
     env_file:
-      - .env
+      - ../../.env
     environment:
       - POSTGRES_HOST=db
       - HOST=0.0.0.0
       - REDIS_HOST=redis
       - APP_TYPE=api
     volumes:
-      - .:/cloudmesh
+      - ../../backend:/cloudmesh
     depends_on:
       - db
       - redis
   worker:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ../../backend
+      dockerfile: ../docker/dev/Dockerfile.dev
     restart: always
     env_file:
-      - .env
+      - ../../.env
     environment:
       - POSTGRES_HOST=db
       - REDIS_HOST=redis
       - APP_TYPE=worker
     volumes:
-      - .:/cloudmesh
+      - ../../backend:/cloudmesh
     depends_on:
       - backend
   db:
     image: postgres:17-alpine
     restart: always
     env_file:
-      - .env
+      - ../../.env  
     ports:
       - 5432:5432
     healthcheck:
@@ -53,7 +53,7 @@ services:
     image: redis:7-alpine
     restart: always
     env_file:
-      - .env
+      - ../../.env
     command: "--requirepass ${REDIS_PASS}"
     ports:
       - 6379:6379

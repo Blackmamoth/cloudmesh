@@ -25,11 +25,16 @@ func CacheProviderFileIDs(ctx context.Context, key string, values []string, ttl 
 		return err
 	}
 
-	return db.RedisClient.Set(ctx, key, data, ttl).Err()
+	redisClient := db.GetRedisClient()
+
+	return redisClient.Set(ctx, key, data, ttl).Err()
 }
 
 func GetCachedProviderFileIDs(ctx context.Context, key string) ([]string, error) {
-	val, err := db.RedisClient.Get(ctx, key).Result()
+
+	redisClient := db.GetRedisClient()
+
+	val, err := redisClient.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -41,18 +46,21 @@ func GetCachedProviderFileIDs(ctx context.Context, key string) ([]string, error)
 }
 
 func DeleteKeysByPattern(ctx context.Context, pattern string) error {
+
+	redisClient := db.GetRedisClient()
+
 	var cursor uint64
 	for {
 		var keys []string
 		var err error
 
-		keys, cursor, err = db.RedisClient.Scan(ctx, cursor, pattern, 100).Result()
+		keys, cursor, err = redisClient.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			return err
 		}
 
 		if len(keys) > 0 {
-			if err := db.RedisClient.Del(ctx, keys...).Err(); err != nil {
+			if err := redisClient.Del(ctx, keys...).Err(); err != nil {
 				return err
 			}
 		}

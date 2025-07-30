@@ -13,16 +13,18 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
 type APIServer struct {
-	host     string
-	addr     string
-	connPool *pgxpool.Pool
+	host        string
+	addr        string
+	connPool    *pgxpool.Pool
+	redisClient *redis.Client
 }
 
-func NewAPIServer(host, addr string, connPool *pgxpool.Pool) *APIServer {
+func NewAPIServer(host, addr string, connPool *pgxpool.Pool, redisClient *redis.Client) *APIServer {
 	return &APIServer{
 		host:     host,
 		addr:     addr,
@@ -85,10 +87,10 @@ func (s *APIServer) Run() error {
 func (s *APIServer) registerRoutes() *chi.Mux {
 	r := chi.NewRouter()
 
-	authMiddleware := middlewares.NewAuthMiddleware(s.connPool)
+	authMiddleware := middlewares.NewAuthMiddleware(s.connPool, s.redisClient)
 	fileMiddleware := middlewares.NewFileMiddleware()
 
-	linkHandler := handlers.NewLinkHandler(s.connPool)
+	linkHandler := handlers.NewLinkHandler(s.connPool, s.redisClient)
 	accountHandler := handlers.NewAccountHandler(s.connPool, authMiddleware)
 	filesHandler := handlers.NewFilesHandler(s.connPool, authMiddleware, fileMiddleware)
 
