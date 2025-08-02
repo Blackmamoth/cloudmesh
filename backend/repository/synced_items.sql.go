@@ -145,6 +145,31 @@ func (q *Queries) GetProviderFileIds(ctx context.Context, arg GetProviderFileIds
 	return items, nil
 }
 
+const getSyncedItemData = `-- name: GetSyncedItemData :one
+SELECT account_id, provider_file_id, name, mime_type, size FROM synced_items WHERE id = $1 AND is_folder = false
+`
+
+type GetSyncedItemDataRow struct {
+	AccountID      pgtype.UUID `json:"account_id"`
+	ProviderFileID string      `json:"provider_file_id"`
+	Name           string      `json:"name"`
+	MimeType       pgtype.Text `json:"mime_type"`
+	Size           int64       `json:"size"`
+}
+
+func (q *Queries) GetSyncedItemData(ctx context.Context, fileID pgtype.UUID) (GetSyncedItemDataRow, error) {
+	row := q.db.QueryRow(ctx, getSyncedItemData, fileID)
+	var i GetSyncedItemDataRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.ProviderFileID,
+		&i.Name,
+		&i.MimeType,
+		&i.Size,
+	)
+	return i, err
+}
+
 const getSyncedItems = `-- name: GetSyncedItems :many
 SELECT synced_items.id,
        synced_items.name,

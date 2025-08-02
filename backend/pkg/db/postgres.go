@@ -14,19 +14,19 @@ import (
 )
 
 var (
-	PoolConfig *pgxpool.Config
-	ConnPool   *pgxpool.Pool
+	poolConfig *pgxpool.Config
+	connPool   *pgxpool.Pool
 	pgOnce     sync.Once
 )
 
 func GetPGClient() (*pgxpool.Config, *pgxpool.Pool) {
 	pgOnce.Do(func() {
-		poolConfig, err := connectPostgres()
+		poolconfig, err := connectPostgres()
 		if err != nil {
 			config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
 		}
 
-		pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+		pool, err := pgxpool.NewWithConfig(context.Background(), poolconfig)
 		if err != nil {
 			config.LOGGER.Fatal("Application disconnected from PostgreSQL Server", zap.Error(err))
 		}
@@ -37,12 +37,12 @@ func GetPGClient() (*pgxpool.Config, *pgxpool.Pool) {
 
 		config.LOGGER.Info("Application connected to PostgreSQL Server")
 
-		PoolConfig = poolConfig
+		poolConfig = poolconfig
 
-		ConnPool = pool
+		connPool = pool
 	})
 
-	return PoolConfig, ConnPool
+	return poolConfig, connPool
 }
 
 func pingPostgresConnection(connPool *pgxpool.Pool) error {

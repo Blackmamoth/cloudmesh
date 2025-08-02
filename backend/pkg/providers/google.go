@@ -756,3 +756,51 @@ func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpoo
 
 	return insertedRowCount, nil
 }
+
+func (p *GoogleProvider) GetFileStream(ctx context.Context, fileID, fileMimetype string, account repository.GetAccountByUserIDRow) (*FileStream, error) {
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	var resp *http.Response
+
+	switch fileMimetype {
+	case "application/vnd.google-apps.document":
+		resp, err = driveService.Files.Export(fileID, "application/pdf").Download()
+	case "application/vnd.google-apps.spreadsheet":
+		resp, err = driveService.Files.Export(fileID, "text/csv").Download()
+	case "application/vnd.google-apps.presentation":
+		resp, err = driveService.Files.Export(fileID, "application/pdf").Download()
+	default:
+		resp, err = driveService.Files.Get(fileID).Download()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failed")
+	}
+
+	return &FileStream{
+		Content:    resp.Body,
+		HeaderMIME: resp.Header.Get("Content-Type"),
+	}, nil
+}

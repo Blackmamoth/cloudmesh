@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/db"
@@ -56,6 +59,10 @@ type PermanentDeleteValidation struct {
 	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
 }
 
+type StreamFileValidation struct {
+	FileID string `validate:"required,uuid4" json:"file_id"`
+}
+
 func (v *GetFilesValidation) setDefaults() {
 	if v.Limit == 0 {
 		v.Limit = DEFAULT_LIMIT
@@ -100,7 +107,9 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 
 	r.Post("/move-to-trash", h.moveFilesToTrash)
 
-	r.Post("/permanent-delete-files", h.permanentlyDelete)
+	r.Post("/permanently-delete-files", h.permanentlyDelete)
+
+	r.Post("/stream-file", h.streamFile)
 
 	return r
 }
@@ -440,6 +449,110 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
 		"message": "Files successfully deleted",
 	})
+}
+
+func (h *FilesHandler) streamFile(w http.ResponseWriter, r *http.Request) {
+	var payload StreamFileValidation
+
+	defer r.Body.Close()
+
+	if err := utils.ParseJSON(r, &payload); err != nil && errors.Is(err, io.EOF) {
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("request body cannot be empty"))
+		return
+	}
+
+	if err := utils.Validate.Struct(payload); err != nil {
+		errs := utils.GenerateValidationErrorObject(err.(validator.ValidationErrors), payload)
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, errs)
+		return
+	}
+
+	userID := r.Context().Value(middlewares.UserKey).(string)
+
+	fileID, err := db.PGUUID(payload.FileID)
+	if err != nil {
+		config.LOGGER.Error("failed to parse string into UUID", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not process your request, please try again"))
+		return
+	}
+
+	conn, err := h.connPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+	defer conn.Release()
+
+	queries := repository.New(conn)
+
+	fileData, err := queries.GetSyncedItemData(r.Context(), *fileID)
+	if err != nil {
+		config.LOGGER.Error("could not fetch file data from db", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("your request could not be processed, please try again later"))
+		return
+	}
+
+	account, err := queries.GetAccountByUserID(r.Context(), repository.GetAccountByUserIDParams{
+		UserID:    userID,
+		AccountID: fileData.AccountID,
+	})
+
+	if err != nil {
+		config.LOGGER.Error("could not fetch account data from db", zap.Error(err))
+		message := "your request could not be processed, please try again later"
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, sql.ErrNoRows) {
+			message = fmt.Sprintf("file with id `%s` does not belong to your account", fileID)
+			statusCode = http.StatusForbidden
+		}
+		utils.SendAPIErrorResponse(w, statusCode, message)
+		return
+	}
+
+	provider := providers.OAuthProviders[string(account.Provider)]
+
+	fileStream, err := provider.GetFileStream(r.Context(), fileData.ProviderFileID, fileData.MimeType.String, account)
+	if err != nil {
+		config.LOGGER.Error("could not get filestream", zap.String("provider", string(account.Provider)), zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("we could not fetch your file details"))
+		return
+	}
+	defer fileStream.Content.Close()
+
+	if fileStream.HeaderMIME != "" {
+		w.Header().Set("Content-Type", fileStream.HeaderMIME)
+	} else if fileData.MimeType.Valid && fileData.MimeType.String != "" {
+		w.Header().Set("Content-Type", fileData.MimeType.String)
+	} else {
+		mimeType := h.detectMimeType(fileData.Name)
+		w.Header().Set("Content-Type", mimeType)
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", fileData.Name))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileData.Size))
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	if _, err := io.Copy(w, fileStream.Content); err != nil {
+		config.LOGGER.Error("could not stream file", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("we had an issue streaming your file, please try again later"))
+		return
+	}
+
+}
+
+func (h *FilesHandler) detectMimeType(fileName string) string {
+	ext := filepath.Ext(fileName)
+	if ext == "" {
+		return "application/octet-stream"
+	}
+
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		return "application/octet-stream"
+	}
+
+	return mimeType
 }
 
 func (h *FilesHandler) groupFilesByAccountID(files []repository.GetProviderFileIdsRow) map[pgtype.UUID][]repository.GetProviderFileIdsRow {

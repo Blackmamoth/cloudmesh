@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
@@ -25,6 +26,12 @@ type UserAccountInfo struct {
 	AvatarURL      string `json:"avatar_url"`
 }
 
+type FileStream struct {
+	HeaderMIME    string
+	Content       io.ReadCloser
+	ContentLength int
+}
+
 type Provider interface {
 	GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error)
 	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error)
@@ -35,6 +42,7 @@ type Provider interface {
 	MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error
 	PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error
 	SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error)
+	GetFileStream(ctx context.Context, fileID, fileMimetype string, account repository.GetAccountByUserIDRow) (*FileStream, error)
 }
 
 type OAuthState struct {

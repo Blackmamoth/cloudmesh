@@ -39,7 +39,9 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("file to unmarshal task payload: %v", err)
 	}
 
-	conn, err := db.ConnPool.Acquire(ctx)
+	_, connPool := db.GetPGClient()
+
+	conn, err := connPool.Acquire(ctx)
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
 		return fmt.Errorf("failed to acquire new connection from connection pool: %v", err)

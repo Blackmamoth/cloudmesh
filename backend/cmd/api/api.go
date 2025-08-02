@@ -26,9 +26,10 @@ type APIServer struct {
 
 func NewAPIServer(host, addr string, connPool *pgxpool.Pool, redisClient *redis.Client) *APIServer {
 	return &APIServer{
-		host:     host,
-		addr:     addr,
-		connPool: connPool,
+		host:        host,
+		addr:        addr,
+		connPool:    connPool,
+		redisClient: redisClient,
 	}
 }
 

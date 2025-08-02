@@ -67,6 +67,28 @@ func (q *Queries) GetAccountByProviderID(ctx context.Context, arg GetAccountByPr
 	return id, err
 }
 
+const getAccountByUserID = `-- name: GetAccountByUserID :one
+SELECT provider, access_token, refresh_token FROM linked_account WHERE user_id = $1 AND id = $2
+`
+
+type GetAccountByUserIDParams struct {
+	UserID    string      `json:"user_id"`
+	AccountID pgtype.UUID `json:"account_id"`
+}
+
+type GetAccountByUserIDRow struct {
+	Provider     ProviderEnum `json:"provider"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+}
+
+func (q *Queries) GetAccountByUserID(ctx context.Context, arg GetAccountByUserIDParams) (GetAccountByUserIDRow, error) {
+	row := q.db.QueryRow(ctx, getAccountByUserID, arg.UserID, arg.AccountID)
+	var i GetAccountByUserIDRow
+	err := row.Scan(&i.Provider, &i.AccessToken, &i.RefreshToken)
+	return i, err
+}
+
 const getAuthTokens = `-- name: GetAuthTokens :one
 SELECT provider, access_token, refresh_token FROM linked_account WHERE
 user_id = $1 AND id = $2

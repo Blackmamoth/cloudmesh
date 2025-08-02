@@ -5,6 +5,9 @@ INSERT INTO synced_items (
     @account_id, @provider_file_id, @name, @extension , @size, @path, @mime_type, @parent_folder, @is_folder, @is_trashed, @content_hash, @created_time, @modified_time, @thumbnail_link, @preview_link, @web_view_link, @web_content_link, @link_expires_at
 );
 
+-- name: GetSyncedItemData :one
+SELECT account_id, provider_file_id, name, mime_type, size FROM synced_items WHERE id = @file_id AND is_folder = false;
+
 -- name: GetSyncedItems :many
 SELECT synced_items.id,
        synced_items.name,

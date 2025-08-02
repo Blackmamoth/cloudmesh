@@ -984,3 +984,7 @@ func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEn
 
 	return syncedItems, providerFileIDs
 }
+
+func (p *DropboxProvider) GetFileStream(ctx context.Context, fileID, fileMimetype string, account repository.GetAccountByUserIDRow) (*FileStream, error) {
+	return &FileStream{}, nil
+}
