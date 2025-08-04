@@ -8,11 +8,8 @@
    go install github.com/pressly/goose/v3/cmd/goose@latest
    ```
 3. Make sure you have `make` installed on your system (required for the following steps).
-4. Run `make compose-up` in the root of the project to start the backend services using Docker Compose.
-5. Run the following commands in the `frontend` directory to install dependencies and run migrations:
-   ```sh
-   pnpm install
-   pnpm db:migrate
-   ```
-6. Run `make migration-up` in the root of your project to apply migrations for the backend.
-7. Finally, run `pnpm dev` in the `frontend` directory to start the frontend at port `3000`.
+4. Run the following command to setup dev environment.
+
+```sh
+make dev
+```

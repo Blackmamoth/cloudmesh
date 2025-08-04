@@ -2,7 +2,7 @@
 
 DB_URL = "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DBNAME)?sslmode=$(POSTGRES_SSLMODE)"
 
-MIGRATION_DIR = "./backend/sqlc/migrations"
+MIGRATION_DIR = "./api/sqlc/migrations"
 
 migration:
 	@goose -dir $(MIGRATION_DIR) create $(filter-out $@,$(MAKECMDGOALS)) sql
@@ -26,4 +26,11 @@ compose-down:
 	@docker compose --env-file .env -f ./docker/dev/docker-compose.dev.yml down
 
 buildx:
-	@docker buildx build -f ./docker/prod/Dockerfile --platform linux/amd64 -t cloudmesh-backend .
+	@docker buildx build -f ./docker/prod/Dockerfile --platform linux/amd64 -t cloudmesh-api .
+
+dev:
+	@pnpm -C app install
+	$(MAKE) compose-up
+	@sleep 2
+	@pnpm -C app db:migrate
+	$(MAKE) migration-up

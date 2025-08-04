@@ -4,11 +4,11 @@ WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
-COPY backend/go.mod backend/go.sum ./
+COPY api/go.mod api/go.sum ./
 
 RUN go mod tidy
 
-COPY backend .
+COPY api .
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 

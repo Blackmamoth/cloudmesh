@@ -1,7 +1,7 @@
 services:
-  backend:
+  api:
     build:
-      context: ../../backend
+      context: ../../api
       dockerfile: ../docker/dev/Dockerfile.dev
     restart: always
     ports:
@@ -14,13 +14,13 @@ services:
       - REDIS_HOST=redis
       - APP_TYPE=api
     volumes:
-      - ../../backend:/cloudmesh
+      - ../../api:/cloudmesh
     depends_on:
       - db
       - redis
   worker:
     build:
-      context: ../../backend
+      context: ../../api
       dockerfile: ../docker/dev/Dockerfile.dev
     restart: always
     env_file:
@@ -30,9 +30,9 @@ services:
       - REDIS_HOST=redis
       - APP_TYPE=worker
     volumes:
-      - ../../backend:/cloudmesh
+      - ../../api:/cloudmesh
     depends_on:
-      - backend
+      - api
   db:
     image: postgres:17-alpine
     restart: always
