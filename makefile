@@ -32,5 +32,6 @@ dev:
 	@pnpm -C app install
 	$(MAKE) compose-up
 	@sleep 2
+	@pnpm -C app db:generate
 	@pnpm -C app db:migrate
 	$(MAKE) migration-up
