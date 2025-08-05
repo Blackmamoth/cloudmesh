@@ -4,8 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import Link from "next/link";
-import { JSX, SVGProps } from "react";
+import { JSX, SVGProps, useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { useRouter } from "next/navigation";
 
 const GitHubIcon = (
   props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>
@@ -23,7 +27,55 @@ const GoogleIcon = (
   </svg>
 );
 
+const schema = z.object({
+  name: z.string().trim().min(2, "Name should consist of at least 2 characters"),
+  email: z.email({ message: "Please provide a valid email address" }),
+  password: z.string().trim().min(8, { message: "Password should be of minimum 8 characters" }).max(16, { message: "Password should be of maximum 16 characters" })
+})
+
+type SignUpSchema = z.infer<typeof schema>
+
 export default function SignUp() {
+
+  const [loading, setLoading] = useState(false)
+
+  const router = useRouter()
+
+  const onSocialLogin = async (provider: "google" | "github") => {
+    await authClient.signIn.social({ provider, callbackURL: "/dashboard" }, {
+      onRequest: () => setLoading(true),
+      onSuccess: () => setLoading(false),
+      onError: (ctx) => {
+        setLoading(false)
+        console.error(ctx.error.message)
+      }
+    })
+  }
+
+  const { register, handleSubmit, formState: { errors, isValid } } = useForm({ resolver: zodResolver(schema) })
+
+  const handleEmailSignUp = async ({ name, email, password }: SignUpSchema) => {
+    if (!isValid) {
+      return
+    }
+    await authClient.signUp.email({
+      name,
+      email,
+      password,
+    }, {
+      onRequest: () => setLoading(true),
+      onSuccess: () => {
+        setLoading(false)
+        router.push("/dashboard")
+      },
+      onError: (ctx) => {
+        setLoading(false)
+        console.error(ctx.error.message)
+      }
+    })
+  }
+
+
   return (
     <div className="flex items-center justify-center min-h-screen">
       <div className="flex flex-1 flex-col justify-center px-4 py-10 lg:px-6">
@@ -54,27 +106,19 @@ export default function SignUp() {
           </p>
           <div className="mt-8 flex flex-col sm:flex-row items-center space-y-2 sm:space-x-4 sm:space-y-0">
             <Button
+              disabled={loading}
               variant="outline"
               className="w-full sm:w-auto sm:flex-1 items-center justify-center space-x-2 py-2"
-              onClick={async () => {
-                await authClient.signIn.social({
-                  provider: "github",
-                  callbackURL: "/dashboard"
-                });
-              }}
+              onClick={() => onSocialLogin("github")}
             >
               <GitHubIcon className="size-5" aria-hidden={true} />
               <span className="text-sm font-medium">Continue with GitHub</span>
             </Button>
             <Button
+              disabled={loading}
               variant="outline"
               className="mt-2 w-full sm:w-auto sm:flex-1 items-center justify-center space-x-2 py-2 sm:mt-0"
-              onClick={async () => {
-                await authClient.signIn.social({
-                  provider: "google",
-                  callbackURL: "/dashboard"
-                });
-              }}
+              onClick={() => onSocialLogin("google")}
             >
               <GoogleIcon className="size-4" aria-hidden={true} />
               <span className="text-sm font-medium">Continue with Google</span>
@@ -93,36 +137,39 @@ export default function SignUp() {
             </div>
           </div>
 
-          <form className="space-y-6">
+          <form className="space-y-6" onSubmit={handleSubmit(handleEmailSignUp)}>
             <div className="grid gap-4">
               <div>
                 <Label htmlFor="name">Full Name</Label>
-                <Input 
-                  id="name" 
-                  type="text" 
-                  placeholder="John Doe" 
+                <Input
+                  id="name"
+                  type="text"
+                  placeholder="John Doe"
                   className="mt-2"
+                  {...register("name")}
                 />
               </div>
               <div>
                 <Label htmlFor="email">Email address</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
-                  placeholder="johndoe@mail.com" 
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="johndoe@mail.com"
                   className="mt-2"
+                  {...register("email")}
                 />
               </div>
               <div>
                 <Label htmlFor="password">Password</Label>
-                <Input 
-                  id="password" 
-                  type="password" 
-                  placeholder="********" 
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="********"
                   className="mt-2"
+                  {...register("password")}
                 />
               </div>
-              <Button type="submit" className="w-full mt-2">
+              <Button disabled={loading} type="submit" className="w-full mt-2">
                 Verify Email
               </Button>
             </div>

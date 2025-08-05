@@ -4,8 +4,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import Link from "next/link";
-import { JSX, SVGProps } from "react";
+import { JSX, SVGProps, useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { useForm } from "react-hook-form";
+
+const schema = z.object({
+  email: z.email({ message: "Please provide a valid email" }),
+  password: z.string().trim(),
+  rememberMe: z.boolean().default(false)
+})
+
+type SignInSchema = z.infer<typeof schema>
 
 const GitHubIcon = (
   props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>
@@ -25,6 +36,41 @@ const GoogleIcon = (
 
 
 export default function Login() {
+
+  const [loading, setLoading] = useState(false)
+
+  const onSocialLogin = async (provider: "google" | "github") => {
+    await authClient.signIn.social({ provider, callbackURL: "/dashboard" }, {
+      onRequest: () => setLoading(true),
+      onSuccess: () => setLoading(false),
+      onError: (ctx) => {
+        setLoading(false)
+        console.error(ctx.error.message)
+      }
+    })
+  }
+
+  const { register, handleSubmit, formState: { errors, isValid } } = useForm({ resolver: zodResolver(schema), defaultValues: { rememberMe: false } })
+
+  const handleEmailLogin = async ({ email, password, rememberMe }: SignInSchema) => {
+    if (!isValid) return;
+    await authClient.signIn.email({
+      email,
+      password,
+      rememberMe,
+      callbackURL: "/dashboard"
+    }, {
+      onRequest: () => setLoading(true),
+      onSuccess: () => {
+        setLoading(false)
+      },
+      onError: (ctx) => {
+        setLoading(false)
+        console.error(ctx.error.message)
+      }
+    })
+  }
+
   return (
     <div className="flex items-center justify-center min-h-screen">
       <div className="flex flex-1 flex-col justify-center px-4 py-10 lg:px-6">
@@ -55,27 +101,19 @@ export default function Login() {
           </p>
           <div className="mt-8 flex flex-col sm:flex-row items-center space-y-2 sm:space-x-4 sm:space-y-0">
             <Button
+              disabled={loading}
               variant="outline"
               className="w-full sm:w-auto sm:flex-1 items-center justify-center space-x-2 py-2"
-              onClick={async () => {
-                await authClient.signIn.social({
-                  provider: "github",
-                  callbackURL: "/dashboard"
-                });
-              }}
+              onClick={() => onSocialLogin("github")}
             >
               <GitHubIcon className="size-5" aria-hidden={true} />
               <span className="text-sm font-medium">Login with GitHub</span>
             </Button>
             <Button
+              disabled={loading}
               variant="outline"
               className="mt-2 w-full sm:w-auto sm:flex-1 items-center justify-center space-x-2 py-2 sm:mt-0"
-              onClick={async () => {
-                await authClient.signIn.social({
-                  provider: "google",
-                  callbackURL: "/dashboard"
-                });
-              }}
+              onClick={() => onSocialLogin("google")}
             >
               <GoogleIcon className="size-4" aria-hidden={true} />
               <span className="text-sm font-medium">Login with Google</span>
@@ -94,13 +132,13 @@ export default function Login() {
             </div>
           </div>
 
-          <form className="space-y-8">
+          <form className="space-y-8" onSubmit={handleSubmit(handleEmailLogin)}>
             <div className="grid gap-4">
               <Label htmlFor="email">Email address</Label>
-              <Input id="email" type="email" placeholder="johndoe@mail.com" />
+              <Input id="email" type="email" placeholder="johndoe@mail.com" {...register("email")} />
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" placeholder="********" />
-              <Button type="submit" className="w-full">
+              <Input id="password" type="password" placeholder="********" {...register("password")} />
+              <Button disabled={loading} type="submit" className="w-full">
                 Sign In with Email
               </Button>
             </div>
