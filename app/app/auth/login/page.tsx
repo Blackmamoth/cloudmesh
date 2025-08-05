@@ -9,6 +9,7 @@ import { authClient } from "@/lib/auth-client";
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 
 const schema = z.object({
   email: z.email({ message: "Please provide a valid email" }),
@@ -45,7 +46,7 @@ export default function Login() {
       onSuccess: () => setLoading(false),
       onError: (ctx) => {
         setLoading(false)
-        console.error(ctx.error.message)
+        toast.error(ctx.error.message)
       }
     })
   }
@@ -66,7 +67,7 @@ export default function Login() {
       },
       onError: (ctx) => {
         setLoading(false)
-        console.error(ctx.error.message)
+        toast.error(ctx.error.message)
       }
     })
   }
@@ -136,8 +137,10 @@ export default function Login() {
             <div className="grid gap-4">
               <Label htmlFor="email">Email address</Label>
               <Input id="email" type="email" placeholder="johndoe@mail.com" {...register("email")} />
+              {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
               <Label htmlFor="password">Password</Label>
               <Input id="password" type="password" placeholder="********" {...register("password")} />
+              {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
               <Button disabled={loading} type="submit" className="w-full">
                 Sign In with Email
               </Button>

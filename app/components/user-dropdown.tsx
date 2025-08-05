@@ -30,6 +30,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useForm } from "react-hook-form";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 const accountSchema = z.object({
   name: z.string().trim().min(2, { message: "Name should consist of at least 2 characters" }).optional(),
@@ -63,7 +64,7 @@ export default function UserDropdown() {
         name
       }, {
         onError: (ctx) => {
-          console.error(ctx.error.message)
+          toast.error(ctx.error.message)
         }
       })
     }
@@ -73,7 +74,7 @@ export default function UserDropdown() {
         newEmail: email
       }, {
         onError: (ctx) => {
-          console.error(ctx.error.message)
+          toast.error(ctx.error.message)
         }
       })
     }
@@ -85,7 +86,7 @@ export default function UserDropdown() {
         revokeOtherSessions: true,
       }, {
         onError: (ctx) => {
-          console.error(ctx.error.message)
+          toast.error(ctx.error.message)
         }
       })
     }

@@ -10,6 +10,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 const GitHubIcon = (
   props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>
@@ -47,7 +48,7 @@ export default function SignUp() {
       onSuccess: () => setLoading(false),
       onError: (ctx) => {
         setLoading(false)
-        console.error(ctx.error.message)
+        toast.error(ctx.error.message)
       }
     })
   }
@@ -70,7 +71,7 @@ export default function SignUp() {
       },
       onError: (ctx) => {
         setLoading(false)
-        console.error(ctx.error.message)
+        toast.error(ctx.error.message)
       }
     })
   }
@@ -148,6 +149,7 @@ export default function SignUp() {
                   className="mt-2"
                   {...register("name")}
                 />
+                {errors.name && <p className="text-sm text-red-500">{errors.name.message}</p>}
               </div>
               <div>
                 <Label htmlFor="email">Email address</Label>
@@ -158,6 +160,7 @@ export default function SignUp() {
                   className="mt-2"
                   {...register("email")}
                 />
+                {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
               </div>
               <div>
                 <Label htmlFor="password">Password</Label>
@@ -168,6 +171,7 @@ export default function SignUp() {
                   className="mt-2"
                   {...register("password")}
                 />
+                {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
               </div>
               <Button disabled={loading} type="submit" className="w-full mt-2">
                 Verify Email
