@@ -24,6 +24,7 @@ import { RiMoreLine, RiErrorWarningLine, RiCheckboxCircleLine, RiLoader4Line, Ri
 import dropboxlogo from "@/public/dropbox-logo.png"
 import googledrivelogo from "@/public/google-drive-logo.webp"
 import onedrivelogo from "@/public/onedrive-logo.webp"
+import { env } from '@/lib/env'
 
 type AccountStatus = 'healthy' | 'error' | 'syncing'
 
@@ -109,24 +110,28 @@ const linkedAccountsData: Provider[] = [
 // Provider options for the dialog
 const availableProviders = [
   {
+    id: 'google',
     name: 'Google Drive',
     logo: googledrivelogo,
     description: 'Connect your Google Drive account',
     color: 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
   },
   {
+    id: 'dropbox',
     name: 'Dropbox',
     logo: dropboxlogo,
     description: 'Connect your Dropbox account',
     color: 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
   },
   {
+    id: 'onedrive',
     name: 'OneDrive',
     logo: onedrivelogo,
     description: 'Connect your Microsoft OneDrive account',
     color: 'bg-cyan-50 dark:bg-cyan-950/20 border-cyan-200 dark:border-cyan-800'
   },
   {
+    id: 'box',
     name: 'Box',
     logo: null, // We'll use a text-based placeholder
     description: 'Connect your Box account',
@@ -137,9 +142,19 @@ const availableProviders = [
 function AddAccountDialog({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
 
-  const handleProviderSelect = (providerName: string) => {
-    console.log(`Connecting to ${providerName}`)
-    // Here you would typically redirect to the OAuth flow
+  const getOAuthState = async () => {
+    try {
+      const response = await fetch("/api/get-oauth-state")
+      const body = await response.json()
+      return body?.state
+    } catch (error) {
+      return ""
+    }
+  }
+
+  const handleProviderSelect = async (providerId: string) => {
+    const state = await getOAuthState()
+    document.location.href = `${env.NEXT_PUBLIC_API_URL}/api/v1/link/${providerId}?state=${encodeURIComponent(state)}`
     setOpen(false)
   }
 
@@ -157,13 +172,13 @@ function AddAccountDialog({ children }: { children: React.ReactNode }) {
             Select a cloud storage provider to connect. You'll be redirected to sign in and authorize CloudMesh.
           </DialogDescription>
         </DialogHeader>
-        
+
         {/* Provider Grid */}
         <div className="grid grid-cols-2 gap-4 my-6">
           {availableProviders.map((provider) => (
             <button
-              key={provider.name}
-              onClick={() => handleProviderSelect(provider.name)}
+              key={provider.id}
+              onClick={() => handleProviderSelect(provider.id)}
               className={`p-6 rounded-lg border-2 transition-all hover:shadow-md hover:scale-[1.02] ${provider.color} hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20`}
             >
               <div className="flex flex-col items-center text-center space-y-3">
@@ -264,7 +279,7 @@ const getProgressColor = (percentage: number) => {
 
 function AccountCard({ account }: { account: Account }) {
   const percentage = getStoragePercentage(account.storage.used, account.storage.total, account.storage.unit)
-  
+
   return (
     <div className="rounded-lg border p-4 space-y-4 bg-gradient-to-br from-sidebar/40 to-sidebar/60 border-border/50">
       {/* Header */}
@@ -280,7 +295,7 @@ function AccountCard({ account }: { account: Account }) {
             <p className="text-sm text-muted-foreground">{account.email}</p>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             {getStatusIcon(account.status)}
@@ -288,7 +303,7 @@ function AccountCard({ account }: { account: Account }) {
               {account.status}
             </span>
           </div>
-          
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -328,10 +343,10 @@ function AccountCard({ account }: { account: Account }) {
             {formatStorage(account.storage.used, account.storage.unit)} of {formatStorage(account.storage.total, account.storage.unit)} used
           </span>
         </div>
-        <Progress 
-          value={percentage} 
+        <Progress
+          value={percentage}
           fillColor={getProgressColor(percentage)}
-          className="h-2 dark:bg-neutral-800 bg-neutral-300" 
+          className="h-2 dark:bg-neutral-800 bg-neutral-300"
         />
       </div>
 

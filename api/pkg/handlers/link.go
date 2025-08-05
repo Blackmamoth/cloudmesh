@@ -174,7 +174,11 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
-		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.String("provider", providerName), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to acquire new connection from connection pool",
+			zap.String("provider", providerName),
+			zap.Error(err),
+		)
 		h.errorRedirect(w, r)
 		return
 	}
@@ -182,11 +186,14 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	queries := repository.New(conn)
 
-	existingAccountID, err := queries.GetAccountByProviderID(r.Context(), repository.GetAccountByProviderIDParams{
-		UserID:         userId,
-		Provider:       repository.ProviderEnum(providerName),
-		ProviderUserID: accountInfo.ProviderUserID,
-	})
+	existingAccountID, err := queries.GetAccountByProviderID(
+		r.Context(),
+		repository.GetAccountByProviderIDParams{
+			UserID:         userId,
+			Provider:       repository.ProviderEnum(providerName),
+			ProviderUserID: accountInfo.ProviderUserID,
+		},
+	)
 
 	var accountID string
 	successQuery := "newAccount"
@@ -197,7 +204,6 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 				qx := queries.WithTx(tx)
 
 				id, err := qx.AddAccountDetails(r.Context(), addCountParams)
-
 				if err != nil {
 					return err
 				}
@@ -206,9 +212,12 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 				return nil
 			})
-
 			if err != nil {
-				config.LOGGER.Error("an error occured while inserting account details", zap.String("provider", providerName), zap.Error(err))
+				config.LOGGER.Error(
+					"an error occured while inserting account details",
+					zap.String("provider", providerName),
+					zap.Error(err),
+				)
 				h.errorRedirect(w, r)
 				return
 			}
@@ -233,7 +242,6 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 			return err
 		})
-
 		if err != nil {
 			config.LOGGER.Error("an error occured while updating auth tokens", zap.String("provider", providerName), zap.Error(err))
 			h.errorRedirect(w, r)
@@ -257,7 +265,16 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("%s/accounts?successQuery=%s", config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
+	http.Redirect(
+		w,
+		r,
+		fmt.Sprintf(
+			"%s/linked-accounts?successQuery=%s",
+			config.APIConfig.FRONTEND_HOST,
+			successQuery,
+		),
+		http.StatusFound,
+	)
 }
 
 func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +284,6 @@ func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
 func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
 	key := fmt.Sprintf("link-nonce:%s", nonce)
 	val, err := h.redisClient.Get(ctx, key).Result()
-
 	if err != nil {
 		if err == redis.Nil {
 			return fmt.Errorf("nonce not found or expired")
@@ -295,27 +311,52 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 ) error {
 	task, err := tasks.NewFileSyncTask(userId, accountID)
 	if err != nil {
-		config.LOGGER.Error("failed to create file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to create file sync task",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeFileSync),
+			zap.Error(err),
+		)
 		return err
 	}
 
 	info, err := asynqClient.Enqueue(task, asynq.MaxRetry(3))
 	if err != nil {
-		config.LOGGER.Error("failed to enqueue file sync task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to enqueue file sync task",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeFileSync),
+			zap.Error(err),
+		)
 		return err
 	}
 
-	config.LOGGER.Info("file sync task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
+	config.LOGGER.Info(
+		"file sync task successfully enqueued",
+		zap.String("provider", providerName),
+		zap.String("task_type", tasks.TypeFileSync),
+		zap.String("task_id", info.ID),
+		zap.String("queue", info.Queue),
+	)
 
 	params, err := json.Marshal(tasks.FileSyncPayload{UserID: userId, AccountID: accountID})
 	if err != nil {
-		config.LOGGER.Error("failed to marshal file sync task params", zap.String("provider", providerName), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal file sync task params",
+			zap.String("provider", providerName),
+			zap.Error(err),
+		)
 		return nil
 	}
 
 	accountUUID, err := db.PGUUID(accountID)
 	if err != nil {
-		config.LOGGER.Error("invalid accountID UUID format", zap.String("provider", providerName), zap.String("accountID", accountID), zap.Error(err))
+		config.LOGGER.Error(
+			"invalid accountID UUID format",
+			zap.String("provider", providerName),
+			zap.String("accountID", accountID),
+			zap.Error(err),
+		)
 		return nil
 	}
 
@@ -327,9 +368,15 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 		Queue:     info.Queue,
 		Params:    params,
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to insert job log", zap.String("provider", providerName), zap.String("task_type", tasks.TypeFileSync), zap.String("task_id", info.ID), zap.String("queue", info.Queue), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to insert job log",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeFileSync),
+			zap.String("task_id", info.ID),
+			zap.String("queue", info.Queue),
+			zap.Error(err),
+		)
 		return err
 	}
 
@@ -345,27 +392,52 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 ) error {
 	task, err := tasks.NewAuthTokenRenewalTask(userId, accountID)
 	if err != nil {
-		config.LOGGER.Error("failed to create auth token renewal task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to create auth token renewal task",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeAuthTokenRenewal),
+			zap.Error(err),
+		)
 		return err
 	}
 
 	info, err := asynqClient.Enqueue(task, asynq.MaxRetry(3), asynq.ProcessIn(expiresIn))
 	if err != nil {
-		config.LOGGER.Error("failed to enqueue auth token renewal task", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to enqueue auth token renewal task",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeAuthTokenRenewal),
+			zap.Error(err),
+		)
 		return err
 	}
 
-	config.LOGGER.Info("auth token renewal task successfully enqueued", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.String("task_id", info.ID), zap.String("queue", info.Queue))
+	config.LOGGER.Info(
+		"auth token renewal task successfully enqueued",
+		zap.String("provider", providerName),
+		zap.String("task_type", tasks.TypeAuthTokenRenewal),
+		zap.String("task_id", info.ID),
+		zap.String("queue", info.Queue),
+	)
 
 	params, err := json.Marshal(tasks.AuthTokenRenewalPayload{UserID: userId, AccountID: accountID})
 	if err != nil {
-		config.LOGGER.Error("failed to marshal auth token renewal task params", zap.String("provider", providerName), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal auth token renewal task params",
+			zap.String("provider", providerName),
+			zap.Error(err),
+		)
 		return nil
 	}
 
 	accountUUID, err := db.PGUUID(accountID)
 	if err != nil {
-		config.LOGGER.Error("invalid accountID UUID format", zap.String("provider", providerName), zap.String("accountID", accountID), zap.Error(err))
+		config.LOGGER.Error(
+			"invalid accountID UUID format",
+			zap.String("provider", providerName),
+			zap.String("accountID", accountID),
+			zap.Error(err),
+		)
 		return nil
 	}
 
@@ -377,9 +449,15 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 		Queue:     info.Queue,
 		Params:    params,
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to insert job log", zap.String("provider", providerName), zap.String("task_type", tasks.TypeAuthTokenRenewal), zap.String("task_id", info.ID), zap.String("queue", info.Queue), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to insert job log",
+			zap.String("provider", providerName),
+			zap.String("task_type", tasks.TypeAuthTokenRenewal),
+			zap.String("task_id", info.ID),
+			zap.String("queue", info.Queue),
+			zap.Error(err),
+		)
 		return err
 	}
 

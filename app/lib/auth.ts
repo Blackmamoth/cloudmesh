@@ -11,8 +11,15 @@ export const auth = betterAuth({
     schema: schema,
   }),
   emailAndPassword: {
-    enabled: true, 
-  }, 
+    enabled: true,
+    minPasswordLength: 8,
+    maxPasswordLength: 16,
+  },
+  user: {
+    changeEmail: {
+      enabled: true,
+    },
+  },
   socialProviders: {
     google: {
       clientId: env.GOOGLE_CLIENT_ID,
