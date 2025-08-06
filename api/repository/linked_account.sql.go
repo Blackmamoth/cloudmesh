@@ -118,15 +118,18 @@ func (q *Queries) GetLatestSyncTimeByUserID(ctx context.Context, userID string) 
 }
 
 const getLinkedAccountsByUserID = `-- name: GetLinkedAccountsByUserID :many
-SELECT provider, name, email, avatar_url, last_synced_at FROM linked_account WHERE user_id = $1
+SELECT id, provider, name, email, avatar_url, last_synced_at, access_token, refresh_token FROM linked_account WHERE user_id = $1
 `
 
 type GetLinkedAccountsByUserIDRow struct {
+	ID           pgtype.UUID        `json:"id"`
 	Provider     ProviderEnum       `json:"provider"`
 	Name         string             `json:"name"`
 	Email        string             `json:"email"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	LastSyncedAt pgtype.Timestamptz `json:"last_synced_at"`
+	AccessToken  string             `json:"access_token"`
+	RefreshToken string             `json:"refresh_token"`
 }
 
 func (q *Queries) GetLinkedAccountsByUserID(ctx context.Context, userID string) ([]GetLinkedAccountsByUserIDRow, error) {
@@ -139,11 +142,14 @@ func (q *Queries) GetLinkedAccountsByUserID(ctx context.Context, userID string) 
 	for rows.Next() {
 		var i GetLinkedAccountsByUserIDRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.Provider,
 			&i.Name,
 			&i.Email,
 			&i.AvatarUrl,
 			&i.LastSyncedAt,
+			&i.AccessToken,
+			&i.RefreshToken,
 		); err != nil {
 			return nil, err
 		}

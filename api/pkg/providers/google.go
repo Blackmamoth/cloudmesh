@@ -338,6 +338,80 @@ func (p *GoogleProvider) GetHTTPClient(accessToken, refreshToken string) *http.C
 	return oauth2.NewClient(context.Background(), reusableTokenSource)
 }
 
+func (p *GoogleProvider) GetStorageQuota(
+	ctx context.Context,
+	userID string,
+	accountID *pgtype.UUID,
+	encryptedAccessToken, encryptedRefreshToken string,
+) (*StorageQuota, error) {
+	storageQuotaKey := fmt.Sprintf("storage:google:%s:%s", userID, accountID.String())
+
+	redisClient := db.GetRedisClient()
+
+	cachedStorageQuota := redisClient.Get(ctx, storageQuotaKey)
+
+	if cachedStorageQuota.Err() == nil {
+
+		val, err := cachedStorageQuota.Result()
+		if err != nil {
+			config.LOGGER.Error("failed to get the result from redis cache", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME))
+		} else {
+
+			var storageQuota StorageQuota
+			err = json.Unmarshal([]byte(val), &storageQuota)
+			if err == nil {
+				return &storageQuota, nil
+			}
+			config.LOGGER.Error("failed to unmarshal storage quota", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME))
+		}
+	}
+
+	accessToken, err := utils.Decrypt(encryptedAccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(encryptedRefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	about, err := driveService.About.Get().Fields("storageQuota").Do()
+	if err != nil {
+		config.LOGGER.Error("failed to get storage quota from google drive service", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	storageQuota := StorageQuota{
+		TotalStorage: about.StorageQuota.Limit,
+		UsedStorage:  about.StorageQuota.Usage,
+	}
+
+	storageQuotaCache, err := json.Marshal(storageQuota)
+	if err != nil {
+		config.LOGGER.Error("failed to marshal storage quota for caching", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	storageCache := redisClient.Set(ctx, storageQuotaKey, storageQuotaCache, 15*time.Minute)
+
+	if storageCache.Err() != nil {
+		config.LOGGER.Error("failed to cache storage quota", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+	}
+
+	return &storageQuota, nil
+}
+
 func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
 
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
