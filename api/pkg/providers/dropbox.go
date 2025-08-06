@@ -115,6 +115,14 @@ type DeleteFileResponse struct {
 	Metadata DropboxFileMetadata `json:"metadata"`
 }
 
+type DropboxSpaceUsageResponse struct {
+	Allocation struct {
+		Tag       string `json:".tag"`
+		Allocated int64  `json:"allocated"`
+	} `json:"allocation"`
+	Used int64 `json:"used"`
+}
+
 const (
 	DROPBOX_SESSION_NAME              = "cloudmesh-dropbox-oauth-session"
 	DROPBOX_PROVIDER_NAME             = string(repository.ProviderEnumDropbox)
@@ -126,6 +134,7 @@ const (
 	DROPBOX_PERMANENT_DELETE_ENDPOINT = "https://api.dropboxapi.com/2/files/permanently_delete"
 	DROPBOX_SEARCH_ENDPOINT           = "https://api.dropboxapi.com/2/files/search_v2"
 	DROPBOX_SEARCH_CONTINUE_ENDPOINT  = "https://api.dropboxapi.com/2/files/search/continue_v2"
+	DROPBOX_SPACE_USAGE_ENDPOINT      = "https://api.dropboxapi.com/2/users/get_space_usage"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -457,6 +466,86 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	}
 
 	return dropboxResponse.AccessToken, int64(dropboxResponse.ExpiresIn), nil
+}
+
+func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error) {
+	storageQuotaKey := fmt.Sprintf("storage:dropbox:%s:%s", userID, accountID.String())
+
+	redisClient := db.GetRedisClient()
+
+	cachedStorageQuota := redisClient.Get(ctx, storageQuotaKey)
+
+	if cachedStorageQuota.Err() == nil {
+
+		val, err := cachedStorageQuota.Result()
+		if err != nil {
+			config.LOGGER.Error("failed to get the result from redis cache", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME))
+		} else {
+
+			var storageQuota StorageQuota
+			err = json.Unmarshal([]byte(val), &storageQuota)
+			if err == nil {
+				return &storageQuota, nil
+			}
+			config.LOGGER.Error("failed to unmarshal storage quota", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME))
+		}
+	}
+
+	accessToken, err := utils.Decrypt(encryptedAccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, DROPBOX_SPACE_USAGE_ENDPOINT, nil)
+	if err != nil {
+		config.LOGGER.Error("failed create new http request for dropbox space usage endpoint", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	client := http.Client{}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		config.LOGGER.Error("http request for dropbox space usage endpoint failed", zap.Error(err))
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		config.LOGGER.Error("failed to read response body for space usage request for dropbox", zap.Error(err))
+		return nil, err
+	}
+
+	var dropboxResponse DropboxSpaceUsageResponse
+
+	err = json.Unmarshal(body, &dropboxResponse)
+	if err != nil {
+		config.LOGGER.Error("failed to unmarshal http response body for dropbox space usage endpoint", zap.Error(err))
+		return nil, err
+	}
+
+	storageQuota := StorageQuota{
+		TotalStorage: dropboxResponse.Allocation.Allocated,
+		UsedStorage:  dropboxResponse.Used,
+	}
+
+	storageQuotaCache, err := json.Marshal(storageQuota)
+	if err != nil {
+		config.LOGGER.Error("failed to marshal storage quota for caching", zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	storageCache := redisClient.Set(ctx, storageQuotaKey, storageQuotaCache, 15*time.Minute)
+
+	if storageCache.Err() != nil {
+		config.LOGGER.Error("failed to cache storage quota", zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+	}
+
+	return &storageQuota, nil
 }
 
 func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {

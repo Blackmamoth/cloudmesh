@@ -25,6 +25,16 @@ type UserAccountInfo struct {
 	AvatarURL      string `json:"avatar_url"`
 }
 
+type OAuthState struct {
+	UserID    string `json:"user_id"`
+	CsrfToken string `json:"csrf_token"`
+}
+
+type StorageQuota struct {
+	TotalStorage int64 `json:"total_storage"`
+	UsedStorage  int64 `json:"used_storage"`
+}
+
 type Provider interface {
 	GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error)
 	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error)
@@ -35,12 +45,9 @@ type Provider interface {
 	MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error
 	PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error
 	SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error)
+	GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error)
 }
 
-type OAuthState struct {
-	UserID    string `json:"user_id"`
-	CsrfToken string `json:"csrf_token"`
-}
 
 var (
 	ErrUnsupportedProvider = errors.New("invalid or unsupported provider")
