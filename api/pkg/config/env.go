@@ -56,13 +56,19 @@ type OAuthConfiguration struct {
 		CLIENT_SECRET string `envconfig:"GOOGLE_SECRET" required:"true"`
 		OAUTH_SCOPES  string `envconfig:"GOOGLE_OAUTH_SCOPES" required:"true"`
 		REDIRECT_URI  string `envconfig:"GOOGLE_REDIRECT_URI" required:"true"`
-	} `envconfig:"GOOGLE_"`
+	}
 	DROPBOX struct {
 		CLIENT_ID     string `envconfig:"DROPBOX_ID" required:"true"`
 		CLIENT_SECRET string `envconfig:"DROPBOX_SECRET" required:"true"`
 		OAUTH_SCOPES  string `envconfig:"DROPBOX_OAUTH_SCOPES" required:"true"`
 		REDIRECT_URI  string `envconfig:"DROPBOX_REDIRECT_URI" required:"true"`
-	} `envconfig:"DROPBOX_"`
+	}
+	MICROSOFT struct {
+		CLIENT_ID     string `envconfig:"MICROSOFT_ID" required:"true"`
+		CLIENT_SECRET string `envconfig:"MICROSOFT_SECRET" required:"true"`
+		OAUTH_SCOPES  string `envconfig:"MICROSOFT_OAUTH_SCOPES" required:"true"`
+		REDIRECT_URI  string `envconfig:"MICROSOFT_REDIRECT_URI" required:"true"`
+	}
 }
 
 type CookieStoreConfiguration struct {
@@ -119,5 +125,4 @@ func loadEnv() {
 	if err := envconfig.Process("COOKIE_", &CookieStoreConfig); err != nil {
 		log.Fatalf("An error occured while loading environment variables: %v", err)
 	}
-
 }
