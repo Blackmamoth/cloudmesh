@@ -7,9 +7,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
+	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,10 +40,51 @@ type MicrosoftUser struct {
 	BusinessPhones    []string `json:"businessPhones,omitempty"`
 }
 
+type MicrosoftOneDriveInfoResponse struct {
+	ODataContext         string `json:"@odata.context"`
+	CreatedDateTime      string `json:"createdDateTime"`
+	Description          string `json:"description"`
+	ID                   string `json:"id"`
+	LastModifiedDateTime string `json:"lastModifiedDateTime"`
+	Name                 string `json:"name"`
+	WebURL               string `json:"webUrl"`
+	DriveType            string `json:"driveType"`
+
+	CreatedBy struct {
+		User struct {
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
+	} `json:"createdBy"`
+
+	LastModifiedBy struct {
+		User struct {
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
+	} `json:"lastModifiedBy"`
+
+	Owner struct {
+		User struct {
+			Email       string `json:"email"`
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
+	} `json:"owner"`
+
+	Quota struct {
+		Deleted                int64  `json:"deleted"`
+		Remaining              int64  `json:"remaining"`
+		State                  string `json:"state"`
+		Total                  int64  `json:"total"`
+		Used                   int64  `json:"used"`
+		StoragePlanInformation struct {
+			UpgradeAvailable bool `json:"upgradeAvailable"`
+		} `json:"storagePlanInformation"`
+	} `json:"quota"`
+}
+
 const (
-	MICROSOFT_SESSION_NAME  = "cloudmesh-microsoft-oauth-session"
-	MICROSOFT_PROVIDER_NAME = string(repository.ProviderEnumMicrosoft)
-	MICROSOFT_BASE_URL      = "https://graph.microsoft.com/v1.0"
+	MICROSOFT_SESSION_NAME       = "cloudmesh-microsoft-oauth-session"
+	MICROSOFT_PROVIDER_NAME      = string(repository.ProviderEnumMicrosoft)
+	MICROSOFT_GRAPH_API_BASE_URL = "https://graph.microsoft.com/v1.0"
 )
 
 func NewMicrosoftProvider() *MicrosoftProvider {
@@ -142,7 +186,7 @@ func (p *MicrosoftProvider) GetToken(w http.ResponseWriter, r *http.Request, sto
 }
 
 func (p *MicrosoftProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error) {
-	url := fmt.Sprintf("%s/me", MICROSOFT_BASE_URL)
+	url := fmt.Sprintf("%s/me", MICROSOFT_GRAPH_API_BASE_URL)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -217,5 +261,103 @@ func (p *MicrosoftProvider) SearchByContent(ctx context.Context, searchText stri
 }
 
 func (p *MicrosoftProvider) GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error) {
-	return nil, nil
+	logFields := []zap.Field{
+		zap.String("user_id", userID),
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	storageQuotaKey := fmt.Sprintf("storage:microsoft:%s:%s", userID, accountID.String())
+
+	redisClient := db.GetRedisClient()
+
+	cachedStorageQuota := redisClient.Get(ctx, storageQuotaKey)
+
+	if cachedStorageQuota.Err() == nil {
+
+		val, err := cachedStorageQuota.Result()
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to get the result from redis cache", logFields...)
+		} else {
+
+			var storageQuota StorageQuota
+			err = json.Unmarshal([]byte(val), &storageQuota)
+			if err == nil {
+				return &storageQuota, nil
+			}
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to unmarshal storage quota", logFields...)
+		}
+	}
+
+	accessToken, err := utils.Decrypt(encryptedAccessToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/me/drive", MICROSOFT_GRAPH_API_BASE_URL)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create new http request to get storage quota", logFields...)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	httpClient := http.Client{}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for getting onedrive storage quota failed", logFields...)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read response body of onedrive storage request", logFields...)
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		logFields = append(logFields, zap.Error(fmt.Errorf("%s", string(body))))
+		config.LOGGER.Error("http response for getting onedrive storage quota returned a non-200 response", logFields...)
+		return nil, err
+	}
+
+	var response MicrosoftOneDriveInfoResponse
+
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal http response body for onedrive storage quota request", logFields...)
+		return nil, err
+	}
+
+	storageQuota := StorageQuota{
+		TotalStorage: response.Quota.Total,
+		UsedStorage:  response.Quota.Used,
+	}
+
+	storageQuotaCache, err := json.Marshal(storageQuota)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to marshal storage quota for caching", logFields...)
+		return nil, err
+	}
+
+	storageCache := redisClient.Set(ctx, storageQuotaKey, storageQuotaCache, 15*time.Minute)
+
+	if storageCache.Err() != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to cache storage quota", logFields...)
+	}
+
+	return &storageQuota, nil
 }

@@ -31,7 +31,7 @@ type AccountDetail struct {
 	UsedStorage  int64              `json:"used_storage"`
 }
 
-func NewAccountHandler(connPool *pgxpool.Pool,authMiddleware *middlewares.AuthMiddleware) *AccountHandler {
+func NewAccountHandler(connPool *pgxpool.Pool, authMiddleware *middlewares.AuthMiddleware) *AccountHandler {
 	return &AccountHandler{
 		connPool:       connPool,
 		authMiddleware: authMiddleware,
@@ -54,7 +54,7 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
-		utils.SendAPIErrorResponse(w,http.StatusInternalServerError,fmt.Errorf("failed to process your request, please try again later"))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
 		return
 	}
 	defer conn.Release()
@@ -63,8 +63,8 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 
 	accountDetails, err := queries.GetLinkedAccountsByUserID(r.Context(), userID)
 	if err != nil {
-		config.LOGGER.Error("failed to fetch account details",zap.String("user_id", userID),zap.Error(err))
-		utils.SendAPIErrorResponse(w,http.StatusInternalServerError,fmt.Errorf("failed to process your request, please try again later"))
+		config.LOGGER.Error("failed to fetch account details", zap.String("user_id", userID), zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
 		return
 	}
 
@@ -73,10 +73,10 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 	for _, account := range accountDetails {
 		provider := providers.OAuthProviders[string(account.Provider)]
 
-		storageQuota, err := provider.GetStorageQuota(r.Context(),userID,&account.ID,account.AccessToken,account.RefreshToken)
+		storageQuota, err := provider.GetStorageQuota(r.Context(), userID, &account.ID, account.AccessToken, account.RefreshToken)
 		if err != nil {
 			config.LOGGER.Error("failed to get storage quota", zap.Error(err))
-			utils.SendAPIErrorResponse(w,http.StatusInternalServerError,fmt.Errorf("failed to process your request, please try again later"))
+			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
 			return
 		}
 
@@ -94,8 +94,8 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 
 	lastSyncedTime, err := queries.GetLatestSyncTimeByUserID(r.Context(), userID)
 	if err != nil {
-		config.LOGGER.Error("failed to fetch latest sync time",zap.String("user_id", userID),zap.Error(err))
-		utils.SendAPIErrorResponse(w,http.StatusInternalServerError,fmt.Errorf("failed to process your request, please try again later"))
+		config.LOGGER.Error("failed to fetch latest sync time", zap.String("user_id", userID), zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
 		return
 	}
 
