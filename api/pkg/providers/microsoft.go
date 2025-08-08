@@ -1,12 +1,14 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -151,6 +153,16 @@ type OneDriveItem struct {
 	} `json:"specialFolder,omitempty"`
 }
 
+type MicrosoftAuthResponse struct {
+	TokenType     string `json:"token_type"`
+	Scope         string `json:"scope"`
+	ExpiresIn     int64  `json:"expires_in"`
+	ExtExpiresInt int64  `json:"ext_expires_in"`
+	AccessToken   string `json:"access_token"`
+	RefreshToken  string `json:"refresh_token"`
+	IDToken       string `json:"id_token"`
+}
+
 type MicrosoftGetDriveItemsResponse struct {
 	DataContext   string         `json:"@odata.context"`
 	DataNextLink  string         `json:"@odata.nextLink"`
@@ -162,6 +174,7 @@ const (
 	MICROSOFT_SESSION_NAME       = "cloudmesh-microsoft-oauth-session"
 	MICROSOFT_PROVIDER_NAME      = string(repository.ProviderEnumMicrosoft)
 	MICROSOFT_GRAPH_API_BASE_URL = "https://graph.microsoft.com/v1.0"
+	MICROSOFT_OAUTH_ENDPOINT     = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 )
 
 func NewMicrosoftProvider() *MicrosoftProvider {
@@ -546,7 +559,84 @@ func (p *MicrosoftProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgx
 }
 
 func (p *MicrosoftProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
-	return "", 0, nil
+	logFields := []zap.Field{
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	data := url.Values{}
+
+	data.Add("grant_type", "refresh_token")
+	data.Add("refresh_token", refreshToken)
+	data.Add("client_id", p.Config.ClientID)
+	data.Add("client_secret", p.Config.ClientSecret)
+
+	res, err := http.Post(MICROSOFT_OAUTH_ENDPOINT, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for onedrive token renewal failed", logFields...)
+		return "", 0, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for onedrive token renewal", logFields...)
+		return "", 0, err
+	}
+
+	if res.StatusCode != http.StatusOK {
+		err = fmt.Errorf("%s", string(body))
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for onedrive token renewal retuned a non-ok response", logFields...)
+		return "", 0, err
+	}
+
+	var oneDriveResponse MicrosoftAuthResponse
+
+	err = json.Unmarshal(body, &oneDriveResponse)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal onedrive token renewal response body", logFields...)
+		return "", 0, err
+	}
+
+	expiresIn := time.Now().Add(time.Duration(oneDriveResponse.ExpiresIn) * time.Second)
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		encryptedAccessToken, err := utils.Encrypt(oneDriveResponse.AccessToken)
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to encrypte new access token", logFields...)
+			return err
+		}
+
+		encryptedRefreshToken, err := utils.Encrypt(oneDriveResponse.RefreshToken)
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to encrypte refresh token", logFields...)
+			return err
+		}
+
+		qx := repository.New(conn).WithTx(tx)
+
+		return qx.UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+			AccessToken:  encryptedAccessToken,
+			RefreshToken: encryptedRefreshToken,
+			TokenType:    db.PGTextField(oneDriveResponse.TokenType),
+			Expiry:       db.PGTimestamptzField(expiresIn),
+			AccountID:    accountID,
+		})
+	})
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to update new oauth tokens", logFields...)
+		return "", 0, nil
+	}
+
+	return oneDriveResponse.AccessToken, oneDriveResponse.ExpiresIn, nil
 }
 
 func (p *MicrosoftProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
@@ -562,7 +652,7 @@ func (p *MicrosoftProvider) PermanentlyDeleteFiles(ctx context.Context, accountI
 }
 
 func (p *MicrosoftProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
-	return nil, nil
+	return []string{}, nil
 }
 
 func (p *MicrosoftProvider) GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error) {
