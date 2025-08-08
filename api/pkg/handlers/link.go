@@ -83,7 +83,6 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 
 	provider, ok := providers.OAuthProviders[providerName]
 	if !ok {
-		fmt.Println("no provider")
 		h.errorRedirect(w, r)
 		return
 	}
@@ -111,7 +110,6 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if oauthState.UserID == "" {
-		fmt.Println("here")
 		h.errorRedirect(w, r)
 		return
 	}

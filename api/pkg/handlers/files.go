@@ -171,7 +171,6 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 		OffsetBy:        payload.Offset,
 		ProviderFileIds: providerFileIDs,
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to fetch files", zap.String("user_id", userID), zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not fetch your files details, please try again later"))
@@ -184,7 +183,6 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 		Provider:     repository.ProviderEnum(payload.Provider),
 		Search:       payload.Search,
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to fetch file counts", zap.String("user_id", userID), zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("we could not fetch your files details, please try again later"))
@@ -196,7 +194,6 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 		"file_count":  len(files),
 		"total_files": totalFileCount,
 	})
-
 }
 
 func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +249,6 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		UserID:    userID,
 		AccountID: *accountID,
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err), zap.String("user_id", userID), zap.String("account_id", accountID.String()))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -266,7 +262,6 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 	}
 
 	err = provider.UploadFiles(r.Context(), accountID, conn, queries, authTokens, uploadedFiles)
-
 	if err != nil {
 		config.LOGGER.Error("failed to upload files", zap.Error(err), zap.String("user_id", userID), zap.String("account_id", accountID.String()))
 		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("your files could not be uploaded, please try again later"))
@@ -321,7 +316,6 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 		Ids:       fileIds,
 		IsTrashed: db.PGBool(false),
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to fetch file ids for move to trash action", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -335,7 +329,6 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 			UserID:    userID,
 			AccountID: accountID,
 		})
-
 		if err != nil {
 			config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
 			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -404,7 +397,6 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 		Ids:       fileIds,
 		IsTrashed: db.PGBool(true),
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to fetch file ids for move to trash action", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))
@@ -418,7 +410,6 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 			UserID:    userID,
 			AccountID: accountID,
 		})
-
 		if err != nil {
 			config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err))
 			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed, please try again later"))

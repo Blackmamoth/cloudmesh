@@ -2,10 +2,15 @@ package providers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +20,7 @@ import (
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/gorilla/sessions"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -79,6 +85,77 @@ type MicrosoftOneDriveInfoResponse struct {
 			UpgradeAvailable bool `json:"upgradeAvailable"`
 		} `json:"storagePlanInformation"`
 	} `json:"quota"`
+}
+
+type OneDriveItem struct {
+	DownloadURL          string    `json:"@microsoft.graph.downloadUrl,omitempty"`
+	CreatedDateTime      time.Time `json:"createdDateTime"`
+	ETag                 string    `json:"eTag"`
+	ID                   string    `json:"id"`
+	LastModifiedDateTime time.Time `json:"lastModifiedDateTime"`
+	Name                 string    `json:"name"`
+	WebURL               string    `json:"webUrl"`
+	CTag                 string    `json:"cTag"`
+	Size                 int64     `json:"size"`
+
+	CreatedBy struct {
+		User struct {
+			Email       string `json:"email"`
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
+	} `json:"createdBy"`
+
+	LastModifiedBy struct {
+		User struct {
+			Email       string `json:"email"`
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
+	} `json:"lastModifiedBy"`
+
+	ParentReference struct {
+		DriveType string `json:"driveType"`
+		DriveID   string `json:"driveId"`
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Path      string `json:"path"`
+		SiteID    string `json:"siteId"`
+	} `json:"parentReference"`
+
+	FileSystemInfo struct {
+		CreatedDateTime      string `json:"createdDateTime"`
+		LastModifiedDateTime string `json:"lastModifiedDateTime"`
+	} `json:"fileSystemInfo"`
+
+	File *struct {
+		MimeType string `json:"mimeType"`
+		Hashes   struct {
+			QuickXorHash string `json:"quickXorHash"`
+			Sha1Hash     string `json:"sha1Hash"`
+			Sha256Hash   string `json:"sha256Hash"`
+		} `json:"hashes"`
+	} `json:"file,omitempty"`
+
+	Folder *struct {
+		ChildCount int `json:"childCount"`
+		View       struct {
+			SortBy    string `json:"sortBy"`
+			SortOrder string `json:"sortOrder"`
+			ViewType  string `json:"viewType"`
+		} `json:"view"`
+	} `json:"folder,omitempty"`
+
+	SpecialFolder *struct {
+		Name string `json:"name"`
+	} `json:"specialFolder,omitempty"`
+}
+
+type MicrosoftGetDriveItemsResponse struct {
+	DataContext   string         `json:"@odata.context"`
+	DataNextLink  string         `json:"@odata.nextLink"`
+	DataDeltaLink string         `json:"@odata.deltaLink"`
+	Value         []OneDriveItem `json:"value"`
 }
 
 const (
@@ -198,22 +275,22 @@ func (p *MicrosoftProvider) GetAccountInfo(ctx context.Context, token *oauth2.To
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
 
-	resp, err := httpClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		config.LOGGER.Error("http request for getting microsoft account details failed", zap.String("provider", MICROSOFT_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer res.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for getting microsoft account details", zap.String("provider", MICROSOFT_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("failed to read http resonse body for getting microsoft account details", zap.String("provider", MICROSOFT_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if res.StatusCode != http.StatusOK {
 		err = fmt.Errorf("%s", string(body))
-		config.LOGGER.Error("http response for getting microsoft account details returned a non 200 response", zap.Int("status_code", resp.StatusCode), zap.String("provider", MICROSOFT_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error("http resonse for getting microsoft account details returned a non 200 resonse", zap.Int("status_code", res.StatusCode), zap.String("provider", MICROSOFT_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
@@ -237,7 +314,235 @@ func (p *MicrosoftProvider) GetAccountInfo(ctx context.Context, token *oauth2.To
 }
 
 func (p *MicrosoftProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
+	logFields := []zap.Field{
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	deltaToken := ""
+
+	totalItemCount := 0
+
+	queries := repository.New(conn)
+
+	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", logFields...)
+			return err
+		}
+	}
+
+	if syncDetails.LastSyncedAt.Valid && syncDetails.SyncPageToken.Valid {
+		deltaToken = syncDetails.SyncPageToken.String
+	}
+
+	accessToken, err := utils.Decrypt(authToken.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		return err
+	}
+
+	for {
+		oneDriveResponse, err := p.getOneDriveDeltaFiles(ctx, accountID, conn, accessToken, refreshToken, deltaToken)
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to retrieve files for onedrive", logFields...)
+			return err
+		}
+
+		if oneDriveResponse.DataDeltaLink != "" {
+			deltaLink, err := url.Parse(oneDriveResponse.DataDeltaLink)
+			if err != nil {
+				logFields = append(logFields, zap.Error(err))
+				config.LOGGER.Error("could not parse delta link from onedrive get file request", logFields...)
+				logFields = logFields[:len(logFields)-1]
+			} else {
+				deltaToken = deltaLink.Query().Get("token")
+			}
+		}
+
+		files, providerFileIDs := p.convertToSyncedItemSlice(oneDriveResponse.Value, accountID, syncDetails.LastSyncedAt.Valid)
+
+		var insertedRows int64
+
+		insertedRows, err = p.bulkInsertSyncedItems(ctx, conn, *queries, providerFileIDs, accountID, files, deltaToken)
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("failed to insert synced files", logFields...)
+			return err
+		}
+
+		logFields = append(logFields, zap.Int64("item_count", insertedRows))
+		config.LOGGER.Info("batch inserted", logFields...)
+		logFields = logFields[:len(logFields)-1]
+
+		totalItemCount += int(insertedRows)
+
+		if oneDriveResponse.DataNextLink == "" {
+			break
+		}
+
+	}
+
+	logFields = append(logFields, zap.Int("item_count", totalItemCount))
+	config.LOGGER.Info("OneDrive sync successful", logFields...)
+
 	return nil
+}
+
+func (p *MicrosoftProvider) getOneDriveDeltaFiles(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken, deltaToken string) (*MicrosoftGetDriveItemsResponse, error) {
+	logFields := []zap.Field{
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	oneDriveApiURL := fmt.Sprintf("%s/me/drive/root/delta?$top=1000", MICROSOFT_GRAPH_API_BASE_URL)
+
+	if deltaToken != "" {
+		oneDriveApiURL = fmt.Sprintf("%s&token=%s", oneDriveApiURL, deltaToken)
+	}
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodGet, oneDriveApiURL, nil)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create new http request to get one drive files", logFields...)
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request to get onedrive files failed", logFields...)
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for one drive file request", logFields...)
+		return nil, err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		err = fmt.Errorf("%s", string(body))
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("access token expired or invalid", logFields...)
+		return nil, err
+	}
+
+	if res.StatusCode != http.StatusOK {
+		err = fmt.Errorf("%s", string(body))
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("access token expired or invalid", logFields...)
+		return nil, err
+	}
+
+	var oneDriveResponse MicrosoftGetDriveItemsResponse
+
+	err = json.Unmarshal(body, &oneDriveResponse)
+
+	return &oneDriveResponse, err
+}
+
+func (p *MicrosoftProvider) convertToSyncedItemSlice(items []OneDriveItem, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
+	syncedItems := []repository.AddSyncedItemsParams{}
+	providerFileIDs := []string{}
+
+	for _, item := range items {
+		ext := filepath.Ext(item.Name)
+
+		mimeType := mime.TypeByExtension(ext)
+
+		contentHash := ""
+
+		if item.File != nil {
+			mimeType = item.File.MimeType
+			contentHash = item.File.Hashes.Sha256Hash
+		}
+
+		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
+			AccountID:      accountID,
+			ProviderFileID: item.ID,
+			Name:           item.Name,
+			Extension:      ext,
+			Size:           item.Size,
+			Path:           db.PGTextField(item.ParentReference.Path),
+			MimeType:       db.PGTextField(mimeType),
+			ParentFolder:   db.PGTextField(item.ParentReference.ID),
+			IsFolder:       item.Folder != nil,
+			ContentHash:    db.PGTextField(contentHash),
+			CreatedTime:    db.PGTimestamptzField(item.CreatedDateTime),
+			ModifiedTime:   db.PGTimestamptzField(item.LastModifiedDateTime),
+			ThumbnailLink:  db.PGTextField(""),
+			PreviewLink:    db.PGTextField(""),
+			IsTrashed:      db.PGBool(false),
+			WebViewLink:    db.PGTextField(""),
+			WebContentLink: db.PGTextField(""),
+			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+		})
+
+		if isValidLastSyncedData {
+			providerFileIDs = append(providerFileIDs, item.ID)
+		}
+	}
+
+	return syncedItems, providerFileIDs
+}
+
+func (p *MicrosoftProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams, cursor string) (int64, error) {
+	logFields := []zap.Field{
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+		zap.String("account_id", accountID.String()),
+	}
+
+	var insertedRowCount int64
+
+	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+		if len(providerFileIDs) > 0 {
+			err := qx.DeleteConflictingItems(ctx, repository.DeleteConflictingItemsParams{
+				ProviderFileIds: providerFileIDs,
+				AccountID:       accountID,
+			})
+			if err != nil {
+				logFields = append(logFields, zap.Error(err))
+				config.LOGGER.Error("an error occured while deleting conflicted files", logFields...)
+				return err
+			}
+		}
+
+		insertedRows, err := qx.AddSyncedItems(ctx, files)
+		if err != nil {
+			return err
+		}
+
+		insertedRowCount = insertedRows
+
+		return qx.UpdateLastSyncedTimestamp(ctx, repository.UpdateLastSyncedTimestampParams{
+			AccountID:     accountID,
+			SyncPageToken: db.PGTextField(cursor),
+		})
+	})
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to bulk insert synced items", logFields...)
+		return 0, err
+	}
+
+	return insertedRowCount, nil
 }
 
 func (p *MicrosoftProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
@@ -310,39 +615,39 @@ func (p *MicrosoftProvider) GetStorageQuota(ctx context.Context, userID string, 
 
 	httpClient := http.Client{}
 
-	resp, err := httpClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("http request for getting onedrive storage quota failed", logFields...)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer res.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
-		config.LOGGER.Error("failed to read response body of onedrive storage request", logFields...)
+		config.LOGGER.Error("failed to read resonse body of onedrive storage request", logFields...)
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if res.StatusCode != http.StatusOK {
 		logFields = append(logFields, zap.Error(fmt.Errorf("%s", string(body))))
-		config.LOGGER.Error("http response for getting onedrive storage quota returned a non-200 response", logFields...)
+		config.LOGGER.Error("http resonse for getting onedrive storage quota returned a non-200 resonse", logFields...)
 		return nil, err
 	}
 
-	var response MicrosoftOneDriveInfoResponse
+	var resonse MicrosoftOneDriveInfoResponse
 
-	err = json.Unmarshal(body, &response)
+	err = json.Unmarshal(body, &resonse)
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
-		config.LOGGER.Error("failed to unmarshal http response body for onedrive storage quota request", logFields...)
+		config.LOGGER.Error("failed to unmarshal http resonse body for onedrive storage quota request", logFields...)
 		return nil, err
 	}
 
 	storageQuota := StorageQuota{
-		TotalStorage: response.Quota.Total,
-		UsedStorage:  response.Quota.Used,
+		TotalStorage: resonse.Quota.Total,
+		UsedStorage:  resonse.Quota.Used,
 	}
 
 	storageQuotaCache, err := json.Marshal(storageQuota)
