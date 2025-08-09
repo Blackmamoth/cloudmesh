@@ -418,7 +418,7 @@ func (p *MicrosoftProvider) getOneDriveDeltaFiles(ctx context.Context, accountID
 		zap.String("provider", MICROSOFT_PROVIDER_NAME),
 	}
 
-	oneDriveApiURL := fmt.Sprintf("%s/me/drive/root/delta?$top=1000", MICROSOFT_GRAPH_API_BASE_URL)
+	oneDriveApiURL := fmt.Sprintf("%s/me/drive/root/delta?$top=1000&$select=id,name,size,lastModifiedDateTime,webUrl", MICROSOFT_GRAPH_API_BASE_URL)
 
 	if deltaToken != "" {
 		oneDriveApiURL = fmt.Sprintf("%s&token=%s", oneDriveApiURL, deltaToken)
@@ -503,8 +503,8 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(items []OneDriveItem, accou
 			ThumbnailLink:  db.PGTextField(""),
 			PreviewLink:    db.PGTextField(""),
 			IsTrashed:      db.PGBool(false),
-			WebViewLink:    db.PGTextField(""),
-			WebContentLink: db.PGTextField(""),
+			WebViewLink:    db.PGTextField(item.WebURL),
+			WebContentLink: db.PGTextField(item.DownloadURL),
 			LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
 		})
 
@@ -762,6 +762,106 @@ func (p *MicrosoftProvider) uploadFiles(accessToken string, file middlewares.Upl
 }
 
 func (p *MicrosoftProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+
+	logFields := []zap.Field{
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	var (
+		fileIDs []pgtype.UUID
+		mu      sync.Mutex
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range syncedItemIds {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := p.moveToTrash(accessToken, f.ProviderFileID); err != nil {
+				return err
+			}
+
+			mu.Lock()
+			fileIDs = append(fileIDs, f.FileID)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to move files to trash", logFields...)
+		return err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+		qx := queries.WithTx(tx)
+
+		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
+			FileIds:   fileIDs,
+			AccountID: *accountID,
+		})
+	})
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to set is_trashed to true for file ids", logFields...)
+		return err
+	}
+	return nil
+}
+
+func (p *MicrosoftProvider) moveToTrash(accessToken, fileID string) error {
+	logFields := []zap.Field{
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	httpClient := http.Client{}
+
+	url := fmt.Sprintf("%s/me/drive/items/%s", MICROSOFT_GRAPH_API_BASE_URL, fileID)
+
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("could not create http request to delete onedrive item", logFields...)
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for deleting onedrive item failed", logFields...)
+		return err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for deleting onedrive item request", logFields...)
+		return err
+	}
+
+	if res.StatusCode != http.StatusNoContent {
+		err = fmt.Errorf("http request for deleting onedrive item returned a non-no-content response")
+		logFields = append(logFields, zap.Error(err), zap.Int("status_code", res.StatusCode), zap.String("body", string(body)))
+		config.LOGGER.Error("http request for deleting onedrive item failed", logFields...)
+		return err
+	}
+
 	return nil
 }
 

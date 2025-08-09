@@ -98,9 +98,9 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 
 	r.Post("/", h.getFiles)
 
-	r.Post("/move-to-trash", h.moveFilesToTrash)
+	r.Put("/move-to-trash", h.moveFilesToTrash)
 
-	r.Post("/permanent-delete-files", h.permanentlyDelete)
+	r.Delete("/permanent-delete-files", h.permanentlyDelete)
 
 	return r
 }
