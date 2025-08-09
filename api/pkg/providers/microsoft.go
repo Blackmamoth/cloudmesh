@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
+	"golang.org/x/sync/errgroup"
 )
 
 type MicrosoftProvider struct {
@@ -640,7 +641,124 @@ func (p *MicrosoftProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.
 }
 
 func (p *MicrosoftProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
+	logFields := []zap.Field{
+		zap.String("account_id", accountID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(authTokens.AccessToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	var (
+		mu      sync.Mutex
+		results []OneDriveItem
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range uploadedFiles {
+		file := f
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			uploadedFile, err := p.uploadFiles(accessToken, file)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			results = append(results, *uploadedFile)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
+
+	insertRowCount, err := p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to insert newly uploaded files", logFields...)
+		return err
+	}
+
+	config.LOGGER.Info("batch inserted uploaded file entries", zap.Int64("insert_row_count", insertRowCount))
+
+	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", MICROSOFT_GRAPH_API_BASE_URL, accountID.String())); err != nil {
+		config.LOGGER.Error("failed to delete cache for content search results", logFields...)
+		return err
+	}
+
 	return nil
+}
+
+func (p *MicrosoftProvider) uploadFiles(accessToken string, file middlewares.UploadedFile) (*OneDriveItem, error) {
+	logFields := []zap.Field{
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	url := fmt.Sprintf("%s/me/drive/root:/%s:/content", MICROSOFT_GRAPH_API_BASE_URL, file.FileHeader.Filename)
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPut, url, file.File)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create new request for uploading files to onedrive", logFields...)
+		return nil, err
+	}
+
+	contentType := mime.TypeByExtension(file.FileHeader.Filename)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	req.Header.Set("Authorization", accessToken)
+	req.Header.Set("Content-Type", contentType)
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for uploading file to onedrive failed", logFields...)
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for onedrive file upload", logFields...)
+		return nil, err
+	}
+
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
+		logFields = append(logFields, zap.Int("status_code", res.StatusCode), zap.Error(err))
+		config.LOGGER.Error("http request to upload file to onedrive failed with non-ok status", logFields...)
+		return nil, fmt.Errorf("http request to upload file to onedrive failed with non-ok status")
+	}
+
+	var response OneDriveItem
+
+	err = json.Unmarshal(body, &response)
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal json response for onedrive file upload response", logFields...)
+		return nil, err
+	}
+
+	return &response, nil
 }
 
 func (p *MicrosoftProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
