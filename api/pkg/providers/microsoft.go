@@ -418,7 +418,7 @@ func (p *MicrosoftProvider) getOneDriveDeltaFiles(ctx context.Context, accountID
 		zap.String("provider", MICROSOFT_PROVIDER_NAME),
 	}
 
-	oneDriveApiURL := fmt.Sprintf("%s/me/drive/root/delta?$top=1000&$select=id,name,size,lastModifiedDateTime,webUrl", MICROSOFT_GRAPH_API_BASE_URL)
+	oneDriveApiURL := fmt.Sprintf("%s/me/drive/root/delta?$top=1000", MICROSOFT_GRAPH_API_BASE_URL)
 
 	if deltaToken != "" {
 		oneDriveApiURL = fmt.Sprintf("%s&token=%s", oneDriveApiURL, deltaToken)
@@ -487,6 +487,12 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(items []OneDriveItem, accou
 			contentHash = item.File.Hashes.Sha256Hash
 		}
 
+		parentFolder := "/"
+
+		if item.ParentReference.ID != "" {
+			parentFolder = item.ParentReference.ID
+		}
+
 		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
 			AccountID:      accountID,
 			ProviderFileID: item.ID,
@@ -495,7 +501,7 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(items []OneDriveItem, accou
 			Size:           item.Size,
 			Path:           db.PGTextField(item.ParentReference.Path),
 			MimeType:       db.PGTextField(mimeType),
-			ParentFolder:   db.PGTextField(item.ParentReference.ID),
+			ParentFolder:   db.PGTextField(parentFolder),
 			IsFolder:       item.Folder != nil,
 			ContentHash:    db.PGTextField(contentHash),
 			CreatedTime:    db.PGTimestamptzField(item.CreatedDateTime),
@@ -870,6 +876,7 @@ func (p *MicrosoftProvider) PermanentlyDeleteFiles(ctx context.Context, accountI
 }
 
 func (p *MicrosoftProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
+
 	return []string{}, nil
 }
 
