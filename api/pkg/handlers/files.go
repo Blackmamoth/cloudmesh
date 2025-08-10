@@ -56,6 +56,12 @@ type PermanentDeleteValidation struct {
 	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
 }
 
+type CreateFolderValidation struct {
+	Name           string `validate:"required" json:"name"`
+	AccountID      string `validate:"required,uuid" json:"account_id"`
+	ParentFolderID string `validate:"omitempty" json:"parent_folder_id"`
+}
+
 func (v *GetFilesValidation) setDefaults() {
 	if v.Limit == 0 {
 		v.Limit = DEFAULT_LIMIT
@@ -97,6 +103,8 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 	})
 
 	r.Post("/", h.getFiles)
+
+	r.Post("/create-folder", h.createFolder)
 
 	r.Put("/move-to-trash", h.moveFilesToTrash)
 
@@ -269,6 +277,93 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 	}
 
 	utils.SendAPIResponse(w, http.StatusOK, "files uploaded successfully")
+}
+
+func (h *FilesHandler) createFolder(w http.ResponseWriter, r *http.Request) {
+	var payload CreateFolderValidation
+
+	defer r.Body.Close()
+
+	if err := utils.ParseJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
+		config.LOGGER.Error("could not parse json payload", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed"))
+		return
+	}
+
+	if err := utils.Validate.Struct(payload); err != nil {
+		errs := utils.GenerateValidationErrorObject(err.(validator.ValidationErrors), payload)
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, errs)
+		return
+	}
+
+	userID := r.Context().Value(middlewares.UserKey).(string)
+
+	conn, err := h.connPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed"))
+		return
+	}
+	defer conn.Release()
+
+	parentFolderID := &pgtype.UUID{Valid: false}
+
+	accountID, err := db.PGUUID(payload.AccountID)
+	if err != nil {
+		config.LOGGER.Error("failed to parse account uuid", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed"))
+		return
+
+	}
+
+	if payload.ParentFolderID != "" {
+		parentFolderID, err = db.PGUUID(payload.ParentFolderID)
+		if err != nil {
+			config.LOGGER.Error("failed to parse account uuid", zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, fmt.Errorf("your request could not be processed"))
+			return
+		}
+	}
+
+	queries := repository.New(conn)
+
+	account, err := queries.GetLinkedAccount(r.Context(), repository.GetLinkedAccountParams{
+		UserID:    userID,
+		AccountID: *accountID,
+	})
+	if err != nil {
+		config.LOGGER.Error("failed to retrieve user account", zap.String("account_id", payload.AccountID), zap.String("user_id", userID), zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("your request could not be processed"))
+		return
+	}
+
+	parentFolder := providers.ParentFolder{}
+
+	if parentFolderID.Valid {
+		syncedItem, err := queries.GetSyncedItemByID(r.Context(), repository.GetSyncedItemByIDParams{
+			AccountID: *accountID,
+			ID:        *parentFolderID,
+		})
+		if err != nil {
+			config.LOGGER.Error("failed to retrieve parent folder details", zap.String("account_id", payload.AccountID), zap.String("user_id", userID), zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("your request could not be processed"))
+			return
+		}
+		parentFolder.ID = syncedItem.ProviderFileID
+		parentFolder.Path = syncedItem.Path.String
+	}
+
+	provider := providers.OAuthProviders[string(account.Provider)]
+
+	err = provider.CreateFolder(r.Context(), payload.Name, parentFolder, account, conn, *queries)
+	if err != nil {
+		config.LOGGER.Error("failed to create new folder", zap.Error(err))
+		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("could not create new folder, please try again later"))
+		return
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, map[string]string{"message": "Your folder was successfully created"})
+
 }
 
 func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) {

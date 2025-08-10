@@ -145,6 +145,34 @@ func (q *Queries) GetProviderFileIds(ctx context.Context, arg GetProviderFileIds
 	return items, nil
 }
 
+const getSyncedItemByID = `-- name: GetSyncedItemByID :one
+SELECT name, provider_file_id, is_folder, path FROM synced_items WHERE account_id = $1 AND id = $2
+`
+
+type GetSyncedItemByIDParams struct {
+	AccountID pgtype.UUID `json:"account_id"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+type GetSyncedItemByIDRow struct {
+	Name           string      `json:"name"`
+	ProviderFileID string      `json:"provider_file_id"`
+	IsFolder       bool        `json:"is_folder"`
+	Path           pgtype.Text `json:"path"`
+}
+
+func (q *Queries) GetSyncedItemByID(ctx context.Context, arg GetSyncedItemByIDParams) (GetSyncedItemByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSyncedItemByID, arg.AccountID, arg.ID)
+	var i GetSyncedItemByIDRow
+	err := row.Scan(
+		&i.Name,
+		&i.ProviderFileID,
+		&i.IsFolder,
+		&i.Path,
+	)
+	return i, err
+}
+
 const getSyncedItems = `-- name: GetSyncedItems :many
 SELECT synced_items.id,
        synced_items.name,

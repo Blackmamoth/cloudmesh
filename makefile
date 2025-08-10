@@ -23,7 +23,7 @@ compose-up:
 	@docker compose --env-file .env -f ./docker/dev/docker-compose.dev.yml up -d
 
 compose-down:
-	@docker compose --env-file .env -f ./docker/dev/docker-compose.dev.yml down
+	@docker compose --env-file .env -f ./docker/dev/docker-compose.dev.yml down -v
 
 buildx:
 	@docker buildx build -f ./docker/prod/Dockerfile --platform linux/amd64 -t cloudmesh-api .

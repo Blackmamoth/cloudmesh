@@ -362,13 +362,15 @@ func (p *MicrosoftProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, a
 
 	accessToken, err := utils.Decrypt(authToken.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		zap.Error(err)
+		config.LOGGER.Error("could not decrypt access token", logFields...)
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("could not decrypt refresh token", logFields...)
 		return err
 	}
 
@@ -899,7 +901,8 @@ func (p *MicrosoftProvider) SearchByContent(ctx context.Context, searchText stri
 
 	accessToken, err := utils.Decrypt(account.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
 		return nil, err
 	}
 
@@ -1096,4 +1099,110 @@ func (p *MicrosoftProvider) GetStorageQuota(ctx context.Context, userID string, 
 	}
 
 	return &storageQuota, nil
+}
+
+func (p *MicrosoftProvider) CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error {
+	logFields := []zap.Field{
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	url := fmt.Sprintf("%s/me/drive/root/children", MICROSOFT_GRAPH_API_BASE_URL)
+
+	if parentFolder.ID != "" {
+		url = fmt.Sprintf("%s/me/drive/items/%s/children", MICROSOFT_GRAPH_API_BASE_URL, parentFolder.ID)
+	}
+
+	httpClient := http.Client{}
+
+	reqBody := fmt.Appendf(nil, "{\"name\": \"%s\", \"folder\": {}}", name)
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create a new http request for creating a new folder", logFields...)
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for creating a new folder in onedrive failed", logFields...)
+		return err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for creating a new folder", logFields...)
+		return err
+	}
+
+	if res.StatusCode != http.StatusCreated {
+		err = fmt.Errorf("received non-ok status code for creating a new onedrive folder")
+		logFields = append(logFields, zap.Error(err), zap.String("body", string(body)), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error("http request for creating new onedrive folder failed", logFields...)
+		return err
+	}
+
+	var newFolder OneDriveItem
+
+	err = json.Unmarshal(body, &newFolder)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal one drive item from request body", logFields...)
+		return err
+	}
+
+	ext := filepath.Ext(newFolder.Name)
+
+	mimeType := mime.TypeByExtension(ext)
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+		qx := queries.WithTx(tx)
+
+		_, err := qx.AddSyncedItems(ctx, []repository.AddSyncedItemsParams{
+			{
+				AccountID:      account.ID,
+				ProviderFileID: newFolder.ID,
+				Name:           newFolder.Name,
+				Extension:      ext,
+				Size:           int64(newFolder.Size),
+				Path:           db.PGTextField(newFolder.ParentReference.Path),
+				MimeType:       db.PGTextField(mimeType),
+				ParentFolder:   db.PGTextField(newFolder.ParentReference.ID),
+				IsFolder:       true,
+				ContentHash:    db.PGTextField(""),
+				CreatedTime:    db.PGTimestamptzField(newFolder.CreatedDateTime),
+				ModifiedTime:   db.PGTimestamptzField(newFolder.LastModifiedDateTime),
+				ThumbnailLink:  db.PGTextField(""),
+				PreviewLink:    db.PGTextField(""),
+				IsTrashed:      db.PGBool(false),
+				WebViewLink:    db.PGTextField(newFolder.WebURL),
+				WebContentLink: db.PGTextField(newFolder.DownloadURL),
+				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			},
+		})
+
+		return err
+
+	})
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to insert metadata for newly created folder", logFields...)
+		return err
+	}
+
+	return nil
 }

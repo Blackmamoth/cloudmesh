@@ -32,3 +32,6 @@ SELECT id, provider, name, email, avatar_url, last_synced_at, access_token, refr
 
 -- name: GetLatestSyncTimeByUserID :one
 SELECT last_synced_at FROM linked_account WHERE user_id = @user_id ORDER BY last_synced_at DESC;
+
+-- name: GetLinkedAccount :one
+SELECT id, provider, access_token, refresh_token FROM linked_account WHERE user_id = @user_id AND id = @account_id;
