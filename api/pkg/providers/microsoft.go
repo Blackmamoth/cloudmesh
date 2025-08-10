@@ -154,6 +154,14 @@ type OneDriveItem struct {
 	} `json:"specialFolder,omitempty"`
 }
 
+type OneDriveSearchResponse struct {
+	Context  string `json:"@odata.context"`
+	NextLink string `json:"@odata.nextLink,omitempty"`
+	Value    []struct {
+		ID string `json:"id"`
+	} `json:"value"`
+}
+
 type MicrosoftAuthResponse struct {
 	TokenType     string `json:"token_type"`
 	Scope         string `json:"scope"`
@@ -877,7 +885,115 @@ func (p *MicrosoftProvider) PermanentlyDeleteFiles(ctx context.Context, accountI
 
 func (p *MicrosoftProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
 
-	return []string{}, nil
+	logFields := []zap.Field{
+		zap.String("account_id", account.ID.String()),
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	searchCacheKey := utils.BuildSearchCacheKey(string(account.Provider), account.ID.String(), searchText)
+
+	cachedFileIds, err := utils.GetCachedProviderFileIDs(ctx, searchCacheKey)
+	if err == nil {
+		return cachedFileIds, nil
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		return nil, err
+	}
+
+	providerFileIDs := []string{}
+
+	nextLink := ""
+
+	for {
+		fileIDs, newNextLink, err := p.searchByContent(accessToken, searchText, nextLink)
+		if err != nil {
+			logFields = append(logFields, zap.Error(err))
+			config.LOGGER.Error("onedrive content search request failed", logFields...)
+			return nil, err
+		}
+
+		providerFileIDs = append(providerFileIDs, fileIDs...)
+
+		if newNextLink == "" {
+			break
+		}
+
+		nextLink = newNextLink
+	}
+
+	expiryTime := config.CacheConfig.DEFAULT_MICROSOFT_CACHE_EXPIRY
+
+	if err := utils.CacheProviderFileIDs(ctx, searchCacheKey, providerFileIDs, time.Duration(expiryTime)*time.Minute); err != nil {
+		config.LOGGER.Error("failed to cache search results", logFields...)
+	}
+
+	return providerFileIDs, nil
+}
+
+func (p *MicrosoftProvider) searchByContent(accessToken, searchText, nextLink string) ([]string, string, error) {
+
+	logFields := []zap.Field{
+		zap.String("provider", MICROSOFT_PROVIDER_NAME),
+	}
+
+	url := fmt.Sprintf("%s/me/drive/search(q='{%s}')", MICROSOFT_GRAPH_API_BASE_URL, searchText)
+
+	if nextLink != "" {
+		url = nextLink
+	}
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("could not create http request for onedrive content search", logFields...)
+		return nil, "", err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for onedrive content search failed", logFields...)
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body of onedrive content search request", logFields...)
+		return nil, "", err
+	}
+
+	if res.StatusCode != http.StatusOK {
+		err = fmt.Errorf("http request for onedrive content search returned a non-ok status code")
+		logFields = append(logFields, zap.Error(err), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error("http request for onedrive content search failed", logFields...)
+		return nil, "", err
+	}
+
+	var response OneDriveSearchResponse
+
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal response body of onedrive content search request", logFields...)
+		return nil, "", err
+	}
+
+	providerFileIDs := []string{}
+
+	for _, file := range response.Value {
+		providerFileIDs = append(providerFileIDs, file.ID)
+	}
+
+	return providerFileIDs, response.NextLink, nil
 }
 
 func (p *MicrosoftProvider) GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error) {

@@ -41,8 +41,9 @@ type RedisConfiguration struct {
 }
 
 type CacheConfiguration struct {
-	DEFAULT_GOOGLE_CACHE_EXPIRY  int `envconfig:"GOOGLE_CACHE_EXPIRY" default:"15"`
-	DEFAULT_DROPBOX_CACHE_EXPIRY int `envconfig:"DROPBOX_CACHE_EXPIRY" default:"30"`
+	DEFAULT_GOOGLE_CACHE_EXPIRY    int `envconfig:"GOOGLE_CACHE_EXPIRY" default:"15"`
+	DEFAULT_DROPBOX_CACHE_EXPIRY   int `envconfig:"DROPBOX_CACHE_EXPIRY" default:"30"`
+	DEFAULT_MICROSOFT_CACHE_EXPIRY int `envconfig:"MICROSOFT_CACHE_EXPIRY" default:"15"`
 }
 
 type AsynqConfiguration struct {
