@@ -124,7 +124,7 @@ const availableProviders = [
     color: 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
   },
   {
-    id: 'onedrive',
+    id: 'microsoft',
     name: 'OneDrive',
     logo: onedrivelogo,
     description: 'Connect your Microsoft OneDrive account',

@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TYPE provider_enum AS ENUM ('google', 'dropbox');
+CREATE TYPE provider_enum AS ENUM ('google', 'dropbox', 'microsoft');
 
 CREATE TABLE IF NOT EXISTS linked_account (
     id UUID NOT NULL DEFAULT gen_random_uuid(),

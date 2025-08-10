@@ -141,6 +141,7 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 
 	token, userId, accountInfo, err := provider.GetToken(w, r, store)
 	if err != nil {
+		config.LOGGER.Error("err", zap.Error(err))
 		h.errorRedirect(w, r)
 		return
 	}

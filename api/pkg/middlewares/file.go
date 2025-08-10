@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
@@ -76,7 +77,14 @@ func (m *FileMiddleware) CheckFilePayload(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), uploadedFilesKey{}, uploadedFiles)
-		next.ServeHTTP(w, r.WithContext(ctx))
+
+		neededTime := m.estimateUploadTimeBySize(r)
+		ctx, cancel := context.WithTimeout(ctx, neededTime)
+		defer cancel()
+
+		r = r.WithContext(ctx)
+
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -105,4 +113,19 @@ func (m *FileMiddleware) processAndValidateFile(file multipart.File, fileHeader 
 func (m *FileMiddleware) GetUploadedFiles(ctx context.Context) ([]UploadedFile, bool) {
 	val, ok := ctx.Value(uploadedFilesKey{}).([]UploadedFile)
 	return val, ok
+}
+
+func (m *FileMiddleware) estimateUploadTimeBySize(r *http.Request) time.Duration {
+	contentLength := r.ContentLength
+
+	if contentLength <= 0 {
+		return 30 * time.Second
+	}
+
+	mb := contentLength / (1024 * 1024)
+
+	base := time.Duration(mb) * time.Second
+	buffer := 5 * time.Second
+
+	return base + buffer
 }

@@ -59,8 +59,9 @@ func (ns NullJobStatusEnum) Value() (driver.Value, error) {
 type ProviderEnum string
 
 const (
-	ProviderEnumGoogle  ProviderEnum = "google"
-	ProviderEnumDropbox ProviderEnum = "dropbox"
+	ProviderEnumGoogle    ProviderEnum = "google"
+	ProviderEnumDropbox   ProviderEnum = "dropbox"
+	ProviderEnumMicrosoft ProviderEnum = "microsoft"
 )
 
 func (e *ProviderEnum) Scan(src interface{}) error {

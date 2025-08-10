@@ -48,7 +48,6 @@ type Provider interface {
 	GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error)
 }
 
-
 var (
 	ErrUnsupportedProvider = errors.New("invalid or unsupported provider")
 	ErrNoCode              = errors.New("authorization code not found in redirect url")
@@ -65,6 +64,7 @@ func init() {
 	OAuthProviders = make(map[string]Provider)
 	OAuthProviders[string(repository.ProviderEnumGoogle)] = NewGoogleProvider()
 	OAuthProviders[string(repository.ProviderEnumDropbox)] = NewDropboxProvider()
+	OAuthProviders[string(repository.ProviderEnumMicrosoft)] = NewMicrosoftProvider()
 }
 
 func GenerateOauthState(userID string) (string, *OAuthState, error) {
