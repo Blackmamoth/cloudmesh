@@ -35,6 +35,11 @@ type StorageQuota struct {
 	UsedStorage  int64 `json:"used_storage"`
 }
 
+type ParentFolder struct {
+	ID   string
+	Path string
+}
+
 type Provider interface {
 	GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error)
 	GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error)
@@ -46,6 +51,7 @@ type Provider interface {
 	PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error
 	SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error)
 	GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error)
+	CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error
 }
 
 var (

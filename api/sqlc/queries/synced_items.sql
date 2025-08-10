@@ -90,3 +90,6 @@ UPDATE synced_items SET is_trashed = true WHERE id = ANY(@file_ids::UUID[]) AND 
 
 -- name: DeleteSyncedItems :exec
 DELETE FROM synced_items WHERE id = ANY(@file_ids::UUID[]) AND account_id = @account_id;
+
+-- name: GetSyncedItemByID :one
+SELECT name, provider_file_id, is_folder, path FROM synced_items WHERE account_id = @account_id AND id = @id;

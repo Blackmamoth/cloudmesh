@@ -124,17 +124,10 @@ type DropboxSpaceUsageResponse struct {
 }
 
 const (
-	DROPBOX_SESSION_NAME              = "cloudmesh-dropbox-oauth-session"
-	DROPBOX_PROVIDER_NAME             = string(repository.ProviderEnumDropbox)
-	DROPBOX_AUTH_ENDPOINT             = "https://api.dropboxapi.com/oauth2/token"
-	DROPBOX_ACCOUNT_ENDPOINT          = "https://api.dropboxapi.com/2/users/get_current_account"
-	DROPBOX_LIST_FOLDER_ENDPOINT      = "https://api.dropboxapi.com/2/files/list_folder"
-	DROPBOX_UPLOAD_ENDPOINT           = "https://content.dropboxapi.com/2/files/upload"
-	DROPBOX_DELETE_V2_ENDPOINT        = "https://api.dropboxapi.com/2/files/delete_v2"
-	DROPBOX_PERMANENT_DELETE_ENDPOINT = "https://api.dropboxapi.com/2/files/permanently_delete"
-	DROPBOX_SEARCH_ENDPOINT           = "https://api.dropboxapi.com/2/files/search_v2"
-	DROPBOX_SEARCH_CONTINUE_ENDPOINT  = "https://api.dropboxapi.com/2/files/search/continue_v2"
-	DROPBOX_SPACE_USAGE_ENDPOINT      = "https://api.dropboxapi.com/2/users/get_space_usage"
+	DROPBOX_SESSION_NAME         = "cloudmesh-dropbox-oauth-session"
+	DROPBOX_PROVIDER_NAME        = string(repository.ProviderEnumDropbox)
+	DROPBOX_CONTENT_API_BASE_URL = "https://content.dropboxapi.com"
+	DROPBOX_API_BASE_URL         = "https://api.dropboxapi.com"
 )
 
 func NewDropboxProvider() *DropboxProvider {
@@ -241,7 +234,9 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, DROPBOX_ACCOUNT_ENDPOINT, nil)
+	url := fmt.Sprintf("%s/2/users/get_current_account", DROPBOX_API_BASE_URL)
+
+	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		config.LOGGER.Error("failed to initiate new HTTP POST request", zap.Error(err))
 		return nil, err
@@ -353,17 +348,18 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 }
 
 func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
-	dropboxApiURL := DROPBOX_LIST_FOLDER_ENDPOINT
+
+	url := fmt.Sprintf("%s/2/files/list_folder", DROPBOX_API_BASE_URL)
 	reqBody := []byte(`{"path": "", "recursive": true}`)
 
 	if cursor != "" {
-		dropboxApiURL = fmt.Sprintf("%s/continue", DROPBOX_LIST_FOLDER_ENDPOINT)
+		url = fmt.Sprintf("%s/continue", url)
 		reqBody = fmt.Appendf(nil, "{\"cursor\": \"%s\"}", cursor)
 	}
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, dropboxApiURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		config.LOGGER.Error("an error occured while generating http request for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
@@ -416,7 +412,9 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	data.Add("client_id", p.Config.ClientID)
 	data.Add("client_secret", p.Config.ClientSecret)
 
-	res, err := http.Post(DROPBOX_AUTH_ENDPOINT, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
+	url := fmt.Sprintf("%s/oauth2/token", DROPBOX_API_BASE_URL)
+
+	res, err := http.Post(url, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		config.LOGGER.Error("http request for dropbox token renewal failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
 		return "", 0, err
@@ -497,7 +495,9 @@ func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, ac
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, DROPBOX_SPACE_USAGE_ENDPOINT, nil)
+	url := fmt.Sprintf("%s/2/users/get_space_usage", DROPBOX_API_BASE_URL)
+
+	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		config.LOGGER.Error("failed create new http request for dropbox space usage endpoint", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
@@ -618,11 +618,13 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 		return nil, err
 	}
 
+	url := fmt.Sprintf("%s/2/files/upload", DROPBOX_CONTENT_API_BASE_URL)
+
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest("POST", DROPBOX_UPLOAD_ENDPOINT, file.File)
+	req, err := http.NewRequest("POST", url, file.File)
 	if err != nil {
-		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Error(err))
+		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
@@ -632,7 +634,7 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Error(err))
+		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return nil, err
 	}
 
@@ -645,7 +647,7 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_UPLOAD_ENDPOINT), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
 		return nil, fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
 	}
 
@@ -836,14 +838,14 @@ func (p *DropboxProvider) searchContentResults(ctx context.Context, conn *pgxpoo
 		"query": searchText,
 	}
 
-	reqUrl := DROPBOX_SEARCH_ENDPOINT
+	reqUrl := fmt.Sprintf("%s/2/files/search_v2", DROPBOX_API_BASE_URL)
 
 	if cursor != "" {
 		reqBody = map[string]any{
 			"cursor": cursor,
 		}
 
-		reqUrl = DROPBOX_SEARCH_CONTINUE_ENDPOINT
+		reqUrl = fmt.Sprintf("%s/2/files/search/continue_v2", DROPBOX_API_BASE_URL)
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -915,7 +917,9 @@ func (p *DropboxProvider) moveToTrash(accessToken, filePath string) error {
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, DROPBOX_DELETE_V2_ENDPOINT, bytes.NewReader(reqBody))
+	url := fmt.Sprintf("%s/2/files/delete_v2", DROPBOX_API_BASE_URL)
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return err
@@ -958,7 +962,9 @@ func (p *DropboxProvider) permanentlyDeleteFile(accessToken, filePath string) er
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, DROPBOX_PERMANENT_DELETE_ENDPOINT, bytes.NewReader(reqBody))
+	url := fmt.Sprintf("%s/2/files/permanently_delete", DROPBOX_API_BASE_URL)
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
 		return err
@@ -1072,4 +1078,111 @@ func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEn
 	}
 
 	return syncedItems, providerFileIDs
+}
+
+func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error {
+
+	logFields := []zap.Field{
+		zap.String("provider", DROPBOX_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	parentPath := parentFolder.Path
+
+	reqBody := fmt.Appendf(nil, "{\"autorename\":false,\"path\": \"%s\"}", fmt.Sprintf("%s/%s", parentPath, name))
+
+	url := fmt.Sprintf("%s/2/files/create_folder_v2", DROPBOX_API_BASE_URL)
+
+	httpClient := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create new request for creating new folder in dropbox", logFields...)
+		return err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("http request for creating new folder in dropbox failed", logFields...)
+		return err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to read http response body for dropbox folder creation request", logFields...)
+		return err
+	}
+
+	if res.StatusCode != http.StatusOK {
+		err = fmt.Errorf("http request for creating new folder in dropbox returned a non-ok status code in response")
+		logFields = append(logFields, zap.Error(err), zap.String("body", string(body)), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error("http request for creatin new folder in dropbox failed", logFields...)
+		return err
+	}
+
+	var newFolder DropboxFileMetadata
+
+	err = json.Unmarshal(body, &newFolder)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to unmarshal http response body", logFields...)
+		return err
+	}
+
+	ext := filepath.Ext(newFolder.Name)
+
+	mimeType := mime.TypeByExtension(ext)
+
+	parentFolderPath := path.Dir(newFolder.PathDisplay)
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+		qx := queries.WithTx(tx)
+
+		_, err := qx.AddSyncedItems(ctx, []repository.AddSyncedItemsParams{
+			{
+				AccountID:      account.ID,
+				ProviderFileID: newFolder.ID,
+				Name:           newFolder.Name,
+				Extension:      ext,
+				Size:           int64(newFolder.Size),
+				Path:           db.PGTextField(newFolder.PathDisplay),
+				MimeType:       db.PGTextField(mimeType),
+				ParentFolder:   db.PGTextField(parentFolderPath),
+				IsFolder:       true,
+				ContentHash:    db.PGTextField(""),
+				CreatedTime:    db.PGTimestamptzField(time.Time{}),
+				ModifiedTime:   db.PGTimestamptzField(newFolder.ClientModified),
+				ThumbnailLink:  db.PGTextField(""),
+				PreviewLink:    db.PGTextField(""),
+				WebViewLink:    db.PGTextField(""),
+				WebContentLink: db.PGTextField(""),
+				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			},
+		})
+
+		return err
+
+	})
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to insert metadata for newly created folder", logFields...)
+		return err
+	}
+
+	return nil
 }

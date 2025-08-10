@@ -830,3 +830,96 @@ func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpoo
 
 	return insertedRowCount, nil
 }
+
+func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error {
+	logFields := []zap.Field{
+		zap.String("provider", GOOGLE_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+		return err
+	}
+
+	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error("an error occured while initializing google drive service", logFields...)
+		return err
+	}
+
+	driveFolder := drive.File{
+		Name:     name,
+		MimeType: "application/vnd.google-apps.folder",
+		Parents:  []string{},
+	}
+
+	if parentFolder.ID != "" {
+		driveFolder.Parents = append(driveFolder.Parents, parentFolder.ID)
+	}
+
+	folder, err := driveService.Files.Create(&driveFolder).Fields("id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed").Do()
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to create new folder in google drive", logFields...)
+		return err
+	}
+
+	previewLink := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", folder.Id)
+
+	parsedCreatedTime, err := time.Parse(time.RFC3339, folder.CreatedTime)
+	if err != nil {
+		parsedCreatedTime = time.Time{}
+	}
+
+	parsedModifiedTime, err := time.Parse(time.RFC3339, folder.ModifiedTime)
+	if err != nil {
+		parsedModifiedTime = time.Time{}
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+		qx := queries.WithTx(tx)
+
+		_, err := qx.AddSyncedItems(ctx, []repository.AddSyncedItemsParams{
+			{
+				AccountID:      account.ID,
+				ProviderFileID: folder.Id,
+				Name:           folder.Name,
+				Extension:      folder.FullFileExtension,
+				Size:           folder.Size,
+				MimeType:       db.PGTextField(folder.MimeType),
+				CreatedTime:    db.PGTimestamptzField(parsedCreatedTime),
+				ModifiedTime:   db.PGTimestamptzField(parsedModifiedTime),
+				ParentFolder:   db.PGTextField(parentFolder.ID),
+				IsFolder:       true,
+				IsTrashed:      db.PGBool(folder.Trashed),
+				ContentHash:    db.PGTextField(folder.Sha256Checksum),
+				ThumbnailLink:  db.PGTextField(folder.ThumbnailLink),
+				PreviewLink:    db.PGTextField(previewLink),
+				WebViewLink:    db.PGTextField(folder.WebViewLink),
+				WebContentLink: db.PGTextField(folder.WebContentLink),
+				LinkExpiresAt:  db.PGTimestamptzField(time.Time{}),
+			},
+		})
+
+		return err
+
+	})
+
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to insert metadata for newly created folder", logFields...)
+		return err
+	}
+
+	return nil
+}

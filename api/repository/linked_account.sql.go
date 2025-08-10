@@ -117,6 +117,34 @@ func (q *Queries) GetLatestSyncTimeByUserID(ctx context.Context, userID string) 
 	return last_synced_at, err
 }
 
+const getLinkedAccount = `-- name: GetLinkedAccount :one
+SELECT id, provider, access_token, refresh_token FROM linked_account WHERE user_id = $1 AND id = $2
+`
+
+type GetLinkedAccountParams struct {
+	UserID    string      `json:"user_id"`
+	AccountID pgtype.UUID `json:"account_id"`
+}
+
+type GetLinkedAccountRow struct {
+	ID           pgtype.UUID  `json:"id"`
+	Provider     ProviderEnum `json:"provider"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+}
+
+func (q *Queries) GetLinkedAccount(ctx context.Context, arg GetLinkedAccountParams) (GetLinkedAccountRow, error) {
+	row := q.db.QueryRow(ctx, getLinkedAccount, arg.UserID, arg.AccountID)
+	var i GetLinkedAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Provider,
+		&i.AccessToken,
+		&i.RefreshToken,
+	)
+	return i, err
+}
+
 const getLinkedAccountsByUserID = `-- name: GetLinkedAccountsByUserID :many
 SELECT id, provider, name, email, avatar_url, last_synced_at, access_token, refresh_token FROM linked_account WHERE user_id = $1
 `
