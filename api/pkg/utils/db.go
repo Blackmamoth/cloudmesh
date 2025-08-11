@@ -9,23 +9,37 @@ import (
 	"go.uber.org/zap"
 )
 
-func WithTransaction(ctx context.Context, conn *pgxpool.Conn, fn func(pgx.Tx) error) error {
+func WithTransaction(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	fn func(context.Context, pgx.Tx) error,
+) error {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		config.LOGGER.Error("failed to begin transactoin", zap.Error(err))
+
 		return err
 	}
 
-	defer func() {
+	defer func(ctx context.Context) {
 		if r := recover(); r != nil {
-			tx.Rollback(context.Background())
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+				config.LOGGER.Error("failed to rollback transaction after panic",
+					zap.Error(rollbackErr),
+					zap.Any("panic", r))
+			}
+
 			panic(r)
 		} else if err != nil {
-			tx.Rollback(context.Background())
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+				config.LOGGER.Error("failed to rollback transaction",
+					zap.Error(rollbackErr),
+					zap.NamedError("original_error", err))
+			}
 		}
-	}()
+	}(ctx)
 
-	err = fn(tx)
+	err = fn(ctx, tx)
 	if err != nil {
 		return err
 	}

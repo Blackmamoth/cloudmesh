@@ -11,16 +11,20 @@ import (
 
 func main() {
 	defer config.LOGGER.Sync()
+
 	redisAddr := fmt.Sprintf("%s:%s", config.RedisConfig.HOST, config.RedisConfig.PORT)
 
-	srv := asynq.NewServer(asynq.RedisClientOpt{Addr: redisAddr, Password: config.RedisConfig.PASS}, asynq.Config{
-		Concurrency: config.AsynqConfig.CONCURRENCY,
-		Queues: map[string]int{
-			"critical": 6,
-			"default":  3,
-			"low":      1,
+	srv := asynq.NewServer(
+		asynq.RedisClientOpt{Addr: redisAddr, Password: config.RedisConfig.PASS},
+		asynq.Config{
+			Concurrency: config.AsynqConfig.CONCURRENCY,
+			Queues: map[string]int{
+				"critical": 6,
+				"default":  3,
+				"low":      1,
+			},
 		},
-	})
+	)
 
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(tasks.TypeFileSync, tasks.HandleFileSyncTask)

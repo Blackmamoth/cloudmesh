@@ -1,0 +1,69 @@
+# See the dedicated "version" documentation section.
+version: "2"
+run:
+  dirs:
+    - ./api
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - decorder
+    - dogsled
+    - dupl
+    - dupword
+    - embeddedstructfieldcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - goconst
+    - godot
+    - gosec
+    - iface
+    - inamedparam
+    - loggercheck
+    - mirror
+    - nestif
+    - nilerr
+    - nlreturn
+    - noctx
+    - nonamedreturns
+    - perfsprint
+    - prealloc
+    - predeclared
+    - unconvert
+    - wastedassign
+    - whitespace
+    - wsl_v5
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      disable-default-exclusions: true
+      exclude-functions:
+        - github.com/joho/godotenv.Load
+        - (io.ReadCloser).Close
+        - (*go.uber.org/zap.Logger).Sync
+    gosec:
+      excludes:
+        - G104
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
+

@@ -37,6 +37,8 @@ type GoogleProvider struct {
 
 const (
 	GOOGLE_SESSION_NAME  = "cloudmesh-google-oauth-session"
+	GOOGLE_VERIFIER_KEY  = "pkce_verifier_google"
+	GOOGLE_CSRF_KEY      = "oauth_csrf_token_google"
 	GOOGLE_PROVIDER_NAME = string(repository.ProviderEnumGoogle)
 	GOOGLE_AUTH_ENDPOINT = "https://oauth2.googleapis.com/token"
 )
@@ -60,106 +62,70 @@ func NewGoogleProvider() *GoogleProvider {
 	}
 }
 
-func (p *GoogleProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error) {
-
-	verifier := oauth2.GenerateVerifier()
-
-	encodedState, oauthState, err := GenerateOauthState(userID)
-	if err != nil {
-		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	session, err := store.Get(r, GOOGLE_SESSION_NAME)
-	if err != nil {
-		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	session.Values["pkce_verifier_google"] = verifier
-	session.Values["oauth_csrf_token_google"] = oauthState.CsrfToken
-
-	err = session.Save(r, w)
-	if err != nil {
-		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	url := p.Config.AuthCodeURL(encodedState, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "consent"))
-
-	return url, nil
+func (p *GoogleProvider) GetConsentPageURL(
+	w http.ResponseWriter,
+	r *http.Request,
+	store *sessions.CookieStore,
+	userID string,
+) (string, error) {
+	return getConsentPageURL(
+		userID,
+		GOOGLE_PROVIDER_NAME,
+		GOOGLE_SESSION_NAME,
+		GOOGLE_VERIFIER_KEY,
+		GOOGLE_CSRF_KEY,
+		w,
+		r,
+		&p.Config,
+		store,
+	)
 }
 
-func (p *GoogleProvider) GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error) {
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		return nil, "", nil, ErrNoCode
-	}
-
-	receivedEncodedState := r.URL.Query().Get("state")
-	if receivedEncodedState == "" {
-		return nil, "", nil, ErrNoState
-	}
-
-	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
-	if err != nil {
-		config.LOGGER.Error("failed to decode received state", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return nil, "", nil, fmt.Errorf("failed to decode received state")
-	}
-
-	session, err := store.Get(r, GOOGLE_SESSION_NAME)
-	if err != nil {
-		return nil, "", nil, ErrNoSession
-	}
-
-	storedVerifier, ok := session.Values["pkce_verifier_google"].(string)
-	if !ok || storedVerifier == "" {
-		return nil, "", nil, ErrNoVerifier
-	}
-
-	storedCsrfToken, ok := session.Values["oauth_csrf_token_google"].(string)
-	if !ok || storedCsrfToken == "" {
-		return nil, "", nil, ErrNoState
-	}
-
-	if receivedOauthState.CsrfToken != storedCsrfToken {
-		return nil, "", nil, ErrInvalidState
-	}
-
-	delete(session.Values, "pkce_verifier_google")
-	delete(session.Values, "oauth_csrf_token_google")
-	err = session.Save(r, w)
-	if err != nil {
-		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-	}
-
-	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
-	if err != nil {
-		config.LOGGER.Error("token exchange failed", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return nil, "", nil, err
-	}
-
-	accountInfo, err := p.GetAccountInfo(r.Context(), tok)
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	return tok, receivedOauthState.UserID, accountInfo, nil
+func (p *GoogleProvider) GetToken(
+	w http.ResponseWriter,
+	r *http.Request,
+	store *sessions.CookieStore,
+) (*oauth2.Token, string, *UserAccountInfo, error) {
+	return exchangeToken(
+		r.Context(),
+		r,
+		w,
+		store,
+		GOOGLE_SESSION_NAME,
+		GOOGLE_VERIFIER_KEY,
+		GOOGLE_CSRF_KEY,
+		&p.Config,
+		GOOGLE_PROVIDER_NAME,
+		p.GetAccountInfo,
+	)
 }
 
-func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error) {
-	httpClient := p.GetHTTPClient(token.AccessToken, token.RefreshToken)
+func (p *GoogleProvider) GetAccountInfo(
+	ctx context.Context,
+	token *oauth2.Token,
+) (*UserAccountInfo, error) {
+	httpClient := p.GetHTTPClient(ctx, token.AccessToken, token.RefreshToken)
+
 	svc, err := oauth2Google.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("failed to create oauth2 service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return nil, fmt.Errorf("failed to create oauth2 service")
+		config.LOGGER.Error(
+			"failed to create oauth2 service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return nil, errors.New("failed to create oauth2 service")
 	}
 
 	userInfo, err := svc.Userinfo.Get().Do()
 	if err != nil {
-		config.LOGGER.Error("failed to fetch user info", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return nil, fmt.Errorf("failed to fetch user info")
+		config.LOGGER.Error(
+			"failed to fetch user info",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return nil, errors.New("failed to fetch user info")
 	}
 
 	userAccountInfo := UserAccountInfo{
@@ -173,25 +139,44 @@ func (p *GoogleProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token
 	return &userAccountInfo, nil
 }
 
-func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
-
+func (p *GoogleProvider) SyncFiles(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	accountID pgtype.UUID,
+	authToken repository.GetAuthTokensRow,
+) error {
 	accessToken, err := utils.Decrypt(authToken.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		config.LOGGER.Error(
+			"could not decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+		)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		config.LOGGER.Error(
+			"could not decrypt refresh token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+		)
+
 		return err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -202,22 +187,28 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 	queries := repository.New(conn)
 
 	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
-
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+			config.LOGGER.Error(
+				"could not fetch timestamp and page token for latest sync",
+				zap.String("provider", GOOGLE_PROVIDER_NAME),
+				zap.String("account_id", accountID.String()),
+			)
+
 			return err
 		}
 	}
 
 	if syncDetails.LastSyncedAt.Valid {
-		query = fmt.Sprintf("modifiedTime > '%s'", syncDetails.LastSyncedAt.Time.Format(time.RFC3339))
+		query = fmt.Sprintf(
+			"modifiedTime > '%s'",
+			syncDetails.LastSyncedAt.Time.Format(time.RFC3339),
+		)
 	}
 
 	totalItemCount := 0
 
 	for {
-
 		fileList, err := driveService.Files.
 			List().
 			Q(query).
@@ -225,43 +216,72 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
-
 		if err != nil {
-			if gErr, ok := err.(*googleapi.Error); ok {
-				if gErr.Code == http.StatusUnauthorized {
-					newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+			gErr := &googleapi.Error{}
+			if !errors.As(err, &gErr) || gErr.Code != http.StatusUnauthorized {
+				config.LOGGER.Error(
+					"an error occured while synching google drive files",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.Error(err),
+				)
 
-					if err != nil {
-						return err
-					}
-
-					httpClient = p.GetHTTPClient(newAccessToken, refreshToken)
-					driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
-					if err != nil {
-						config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-						return err
-					}
-
-					continue
-				}
+				return err
 			}
 
-			config.LOGGER.Error("an error occured while synching google drive files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-			return err
+			newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
+			if err != nil {
+				return err
+			}
+
+			httpClient = p.GetHTTPClient(ctx, newAccessToken, refreshToken)
+
+			driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
+			if err != nil {
+				config.LOGGER.Error(
+					"an error occured while initializing google drive service",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.Error(err),
+				)
+
+				return err
+			}
+
+			continue
 		}
 
-		files, providerFileIDs := p.convertToSyncedItemSlice(fileList.Files, accountID, syncDetails.LastSyncedAt.Valid)
+		files, providerFileIDs := p.convertToSyncedItemSlice(
+			fileList.Files,
+			accountID,
+			syncDetails.LastSyncedAt.Valid,
+		)
 
 		var insertedRows int64
 
-		insertedRows, err = p.bulkInsertSyncedItems(ctx, conn, *queries, providerFileIDs, accountID, files)
-
+		insertedRows, err = p.bulkInsertSyncedItems(
+			ctx,
+			conn,
+			*queries,
+			providerFileIDs,
+			accountID,
+			files,
+		)
 		if err != nil {
-			config.LOGGER.Error("failed to bulk insert synced items", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to bulk insert synced items",
+				zap.String("provider", GOOGLE_PROVIDER_NAME),
+				zap.String("account_id", accountID.String()),
+				zap.Error(err),
+			)
+
 			return err
 		}
 
-		config.LOGGER.Info("batch inserted", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
+		config.LOGGER.Info(
+			"batch inserted",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Int64("item_count", insertedRows),
+		)
 
 		totalItemCount += int(insertedRows)
 
@@ -277,18 +297,56 @@ func (p *GoogleProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acco
 	return nil
 }
 
-func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
-	reqUrl := fmt.Sprintf("%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s", GOOGLE_AUTH_ENDPOINT, p.Config.ClientID, p.Config.ClientSecret, refreshToken)
+func (p *GoogleProvider) RenewOAuthTokens(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	accountID pgtype.UUID,
+	refreshToken string,
+) (string, int64, error) {
+	reqUrl := fmt.Sprintf(
+		"%s?grant_type=refresh_token&client_id=%s&client_secret=%s&refresh_token=%s",
+		GOOGLE_AUTH_ENDPOINT,
+		p.Config.ClientID,
+		p.Config.ClientSecret,
+		refreshToken,
+	)
 
-	res, err := http.Post(reqUrl, "application/json", nil)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		reqUrl,
+		nil,
+	) // #nosec G107 -- reqUrl is internal, not user-controlled
 	if err != nil {
-		config.LOGGER.Error("http request for google token renewal failed", zap.String("provider", GOOGLE_PROVIDER_NAME))
+		config.LOGGER.Error(
+			"failed to create new http request for google oauth",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := http.Client{}
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error(
+			"http request for google token renewal failed",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+		)
+
 		return "", 0, err
 	}
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for google token renewal", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"failed to read http response body for google token renewal",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return "", 0, err
 	}
 
@@ -297,15 +355,24 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 	var googleAuthResponse GoogleAuthResponse
 
 	if err := json.Unmarshal(body, &googleAuthResponse); err != nil {
-		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal dropbox token renew response",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return "", 0, err
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		encryptedAccessToken, err := utils.Encrypt(googleAuthResponse.AccessToken)
 		if err != nil {
-			config.LOGGER.Error("failed to encrypt new access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to encrypt new access token",
+				zap.String("provider", GOOGLE_PROVIDER_NAME),
+				zap.Error(err),
+			)
+
 			return err
 		}
 
@@ -319,23 +386,30 @@ func (p *GoogleProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Con
 
 		return err
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to update google oauth tokens in db", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to update google oauth tokens in db",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return "", 0, err
 	}
 
 	return googleAuthResponse.AccessToken, googleAuthResponse.ExpiresIn, nil
 }
 
-func (p *GoogleProvider) GetHTTPClient(accessToken, refreshToken string) *http.Client {
+func (p *GoogleProvider) GetHTTPClient(
+	ctx context.Context,
+	accessToken, refreshToken string,
+) *http.Client {
 	token := &oauth2.Token{AccessToken: accessToken, RefreshToken: refreshToken}
 
-	tokenSource := p.Config.TokenSource(context.Background(), token)
+	tokenSource := p.Config.TokenSource(ctx, token)
 
 	reusableTokenSource := oauth2.ReuseTokenSource(token, tokenSource)
 
-	return oauth2.NewClient(context.Background(), reusableTokenSource)
+	return oauth2.NewClient(ctx, reusableTokenSource)
 }
 
 func (p *GoogleProvider) GetStorageQuota(
@@ -351,44 +425,70 @@ func (p *GoogleProvider) GetStorageQuota(
 	cachedStorageQuota := redisClient.Get(ctx, storageQuotaKey)
 
 	if cachedStorageQuota.Err() == nil {
-
 		val, err := cachedStorageQuota.Result()
 		if err != nil {
-			config.LOGGER.Error("failed to get the result from redis cache", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME))
+			config.LOGGER.Error(
+				"failed to get the result from redis cache",
+				zap.String("user_id", userID),
+				zap.String("account_id", accountID.String()),
+				zap.String("provider", GOOGLE_PROVIDER_NAME),
+			)
 		} else {
-
 			var storageQuota StorageQuota
+
 			err = json.Unmarshal([]byte(val), &storageQuota)
 			if err == nil {
 				return &storageQuota, nil
 			}
+
 			config.LOGGER.Error("failed to unmarshal storage quota", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME))
 		}
 	}
 
 	accessToken, err := utils.Decrypt(encryptedAccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	refreshToken, err := utils.Decrypt(encryptedRefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	about, err := driveService.About.Get().Fields("storageQuota").Do()
 	if err != nil {
-		config.LOGGER.Error("failed to get storage quota from google drive service", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to get storage quota from google drive service",
+			zap.String("account_id", accountID.String()),
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -399,38 +499,70 @@ func (p *GoogleProvider) GetStorageQuota(
 
 	storageQuotaCache, err := json.Marshal(storageQuota)
 	if err != nil {
-		config.LOGGER.Error("failed to marshal storage quota for caching", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal storage quota for caching",
+			zap.String("account_id", accountID.String()),
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	storageCache := redisClient.Set(ctx, storageQuotaKey, storageQuotaCache, 15*time.Minute)
 
 	if storageCache.Err() != nil {
-		config.LOGGER.Error("failed to cache storage quota", zap.String("account_id", accountID.String()), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to cache storage quota",
+			zap.String("account_id", accountID.String()),
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
 	}
 
 	return &storageQuota, nil
 }
 
-func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
-
+func (p *GoogleProvider) UploadFiles(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	uploadedFiles []middlewares.UploadedFile,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -443,8 +575,10 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 
 	for _, f := range uploadedFiles {
 		file := f
+
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
 			uploadedFile, err := p.uploadToDrive(driveService, file)
@@ -453,7 +587,9 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 			}
 
 			mu.Lock()
+
 			results = append(results, uploadedFile)
+
 			mu.Unlock()
 
 			return nil
@@ -467,37 +603,68 @@ func (p *GoogleProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID
 	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
 
 	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files)
-
 	if err != nil {
-		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to insert newly uploaded files",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", GOOGLE_PROVIDER_NAME, accountID.String())); err != nil {
-		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to delete cache for content search results",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return nil
 }
 
-func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+func (p *GoogleProvider) MoveToTrash(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	syncedItemIds []repository.GetProviderFileIdsRow,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -511,6 +678,7 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 	for _, f := range syncedItemIds {
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
 			if err := p.moveToTrash(driveService, f.ProviderFileID); err != nil {
@@ -518,7 +686,9 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 			}
 
 			mu.Lock()
+
 			fileIDs = append(fileIDs, f.FileID)
+
 			mu.Unlock()
 
 			return nil
@@ -527,10 +697,11 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 
 	if err := g.Wait(); err != nil {
 		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+
 		return err
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
@@ -538,33 +709,55 @@ func (p *GoogleProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID
 			AccountID: *accountID,
 		})
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+
 		return err
 	}
 
 	return nil
 }
 
-func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+func (p *GoogleProvider) PermanentlyDeleteFiles(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	syncedItemIds []repository.GetProviderFileIdsRow,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -578,6 +771,7 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 	for _, f := range syncedItemIds {
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
 			if err := p.permanentlyDeleteFile(driveService, f.ProviderFileID); err != nil {
@@ -585,7 +779,9 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 			}
 
 			mu.Lock()
+
 			fileIDs = append(fileIDs, f.FileID)
+
 			mu.Unlock()
 
 			return nil
@@ -594,10 +790,11 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 
 	if err := g.Wait(); err != nil {
 		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+
 		return err
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
@@ -605,22 +802,36 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *
 			AccountID: *accountID,
 		})
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+
 		return err
 	}
 
 	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", GOOGLE_PROVIDER_NAME, accountID.String())); err != nil {
-		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to delete cache for content search results",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return nil
 }
 
-func (p *GoogleProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
-
-	searchCacheKey := utils.BuildSearchCacheKey(string(account.Provider), account.ID.String(), searchText)
+func (p *GoogleProvider) SearchByContent(
+	ctx context.Context,
+	searchText string,
+	account repository.GetUserAccountsRow,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+) ([]string, error) {
+	searchCacheKey := utils.BuildSearchCacheKey(
+		string(account.Provider),
+		account.ID.String(),
+		searchText,
+	)
 
 	cachedFileIds, err := utils.GetCachedProviderFileIDs(ctx, searchCacheKey)
 	if err == nil {
@@ -629,22 +840,36 @@ func (p *GoogleProvider) SearchByContent(ctx context.Context, searchText string,
 
 	accessToken, err := utils.Decrypt(account.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	refreshToken, err := utils.Decrypt(account.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
-
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -662,24 +887,48 @@ func (p *GoogleProvider) SearchByContent(ctx context.Context, searchText string,
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
+		if err != nil {
+			gErr := &googleapi.Error{}
+			if !errors.As(err, &gErr) {
+				config.LOGGER.Error(
+					"failed to fetch file metadata from google drive",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.Error(err),
+				)
 
-		if gErr, ok := err.(*googleapi.Error); ok {
-			if gErr.Code == http.StatusUnauthorized {
-				newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, account.ID, refreshToken)
-
-				if err != nil {
-					return nil, err
-				}
-
-				httpClient = p.GetHTTPClient(newAccessToken, refreshToken)
-				driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
-				if err != nil {
-					config.LOGGER.Error("an error occured while initializing google drive service", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-					return nil, err
-				}
-
-				continue
+				return nil, err
 			}
+
+			if gErr.Code != http.StatusUnauthorized {
+				config.LOGGER.Error(
+					"failed to fetch file metadata from google drive",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.Int("status_code", gErr.Code),
+					zap.Error(err),
+				)
+
+				return nil, err
+			}
+
+			newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, account.ID, refreshToken)
+			if err != nil {
+				return nil, err
+			}
+
+			httpClient = p.GetHTTPClient(ctx, newAccessToken, refreshToken)
+
+			driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
+			if err != nil {
+				config.LOGGER.Error(
+					"an error occured while initializing google drive service",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.Error(err),
+				)
+
+				return nil, err
+			}
+
+			continue
 		}
 
 		for _, file := range fileList.Files {
@@ -691,27 +940,42 @@ func (p *GoogleProvider) SearchByContent(ctx context.Context, searchText string,
 		}
 
 		pageToken = fileList.NextPageToken
-
 	}
 
 	expiryTime := config.CacheConfig.DEFAULT_GOOGLE_CACHE_EXPIRY
 
 	if err := utils.CacheProviderFileIDs(ctx, searchCacheKey, providerFileIDs, time.Duration(expiryTime)*time.Minute); err != nil {
-		config.LOGGER.Error("failed to cache search results", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", account.ID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to cache search results",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", account.ID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return providerFileIDs, nil
 }
 
-func (p *GoogleProvider) uploadToDrive(service *drive.Service, file middlewares.UploadedFile) (*drive.File, error) {
+func (p *GoogleProvider) uploadToDrive(
+	service *drive.Service,
+	file middlewares.UploadedFile,
+) (*drive.File, error) {
 	mimeType := file.ContentType
 
 	fileMeta := &drive.File{Name: file.FileHeader.Filename}
 
-	uploadedFile, err := service.Files.Create(fileMeta).Media(file.File, googleapi.ContentType(mimeType)).Do()
+	uploadedFile, err := service.Files.Create(fileMeta).
+		Media(file.File, googleapi.ContentType(mimeType)).
+		Do()
 	if err != nil {
-		config.LOGGER.Error("upload failed", zap.String("file", file.FileHeader.Filename), zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
-		return nil, fmt.Errorf("upload failed for file '%s': %v", file.FileHeader.Filename, err)
+		config.LOGGER.Error(
+			"upload failed",
+			zap.String("file", file.FileHeader.Filename),
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return nil, fmt.Errorf("upload failed for file '%s': %w", file.FileHeader.Filename, err)
 	}
 
 	return uploadedFile, nil
@@ -731,13 +995,15 @@ func (p *GoogleProvider) permanentlyDeleteFile(service *drive.Service, fileId st
 	return service.Files.Delete(fileId).Do()
 }
 
-func (p *GoogleProvider) convertToSyncedItemSlice(files []*drive.File, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
-
+func (p *GoogleProvider) convertToSyncedItemSlice(
+	files []*drive.File,
+	accountID pgtype.UUID,
+	isValidLastSyncedData bool,
+) ([]repository.AddSyncedItemsParams, []string) {
 	syncedItems := []repository.AddSyncedItemsParams{}
 	providerFileIDs := []string{}
 
 	for _, file := range files {
-
 		parsedCreatedTime, err := time.Parse(time.RFC3339, file.CreatedTime)
 		if err != nil {
 			parsedCreatedTime = time.Time{}
@@ -788,13 +1054,19 @@ func (p *GoogleProvider) convertToSyncedItemSlice(files []*drive.File, accountID
 	}
 
 	return syncedItems, providerFileIDs
-
 }
 
-func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams) (int64, error) {
-
+func (p *GoogleProvider) bulkInsertSyncedItems(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	queries repository.Queries,
+	providerFileIDs []string,
+	accountID pgtype.UUID,
+	files []repository.AddSyncedItemsParams,
+) (int64, error) {
 	var insertedRowCount int64
-	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+
+	err := utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		if len(providerFileIDs) > 0 {
@@ -802,15 +1074,19 @@ func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpoo
 				ProviderFileIds: providerFileIDs,
 				AccountID:       accountID,
 			})
-
 			if err != nil {
-				config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+				config.LOGGER.Error(
+					"an error occured while deleting conflicted files",
+					zap.String("provider", GOOGLE_PROVIDER_NAME),
+					zap.String("account_id", accountID.String()),
+					zap.Error(err),
+				)
+
 				return err
 			}
 		}
 
 		insertedRows, err := qx.AddSyncedItems(ctx, files)
-
 		if err != nil {
 			return err
 		}
@@ -822,16 +1098,27 @@ func (p *GoogleProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpoo
 			AccountID:     accountID,
 		})
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to bulk insert synced item", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to bulk insert synced item",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return 0, err
 	}
 
 	return insertedRowCount, nil
 }
 
-func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error {
+func (p *GoogleProvider) CreateFolder(
+	ctx context.Context,
+	name string,
+	parentFolder ParentFolder,
+	account repository.GetLinkedAccountRow,
+	conn *pgxpool.Conn,
+	queries repository.Queries,
+) error {
 	logFields := []zap.Field{
 		zap.String("provider", GOOGLE_PROVIDER_NAME),
 	}
@@ -839,20 +1126,25 @@ func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFo
 	accessToken, err := utils.Decrypt(account.AccessToken)
 	if err != nil {
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(account.RefreshToken)
 	if err != nil {
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
+
 		return err
 	}
 
-	httpClient := p.GetHTTPClient(accessToken, refreshToken)
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
-		config.LOGGER.Error("an error occured while initializing google drive service", logFields...)
+		config.LOGGER.Error(
+			"an error occured while initializing google drive service",
+			logFields...)
+
 		return err
 	}
 
@@ -866,10 +1158,13 @@ func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFo
 		driveFolder.Parents = append(driveFolder.Parents, parentFolder.ID)
 	}
 
-	folder, err := driveService.Files.Create(&driveFolder).Fields("id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed").Do()
+	folder, err := driveService.Files.Create(&driveFolder).
+		Fields("id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed").
+		Do()
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("failed to create new folder in google drive", logFields...)
+
 		return err
 	}
 
@@ -885,8 +1180,7 @@ func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFo
 		parsedModifiedTime = time.Time{}
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		_, err := qx.AddSyncedItems(ctx, []repository.AddSyncedItemsParams{
@@ -912,12 +1206,11 @@ func (p *GoogleProvider) CreateFolder(ctx context.Context, name string, parentFo
 		})
 
 		return err
-
 	})
-
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("failed to insert metadata for newly created folder", logFields...)
+
 		return err
 	}
 

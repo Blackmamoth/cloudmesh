@@ -15,7 +15,7 @@ type APIConfiguration struct {
 }
 
 type AESConfiguration struct {
-	MASTER_KEY string `envconfig:"AES_MASTER_KEY"   required:"true"`
+	MASTER_KEY string `envconfig:"AES_MASTER_KEY" required:"true"`
 }
 
 type PostgresConfiguration struct {
@@ -41,13 +41,13 @@ type RedisConfiguration struct {
 }
 
 type CacheConfiguration struct {
-	DEFAULT_GOOGLE_CACHE_EXPIRY    int `envconfig:"GOOGLE_CACHE_EXPIRY" default:"15"`
-	DEFAULT_DROPBOX_CACHE_EXPIRY   int `envconfig:"DROPBOX_CACHE_EXPIRY" default:"30"`
+	DEFAULT_GOOGLE_CACHE_EXPIRY    int `envconfig:"GOOGLE_CACHE_EXPIRY"    default:"15"`
+	DEFAULT_DROPBOX_CACHE_EXPIRY   int `envconfig:"DROPBOX_CACHE_EXPIRY"   default:"30"`
 	DEFAULT_MICROSOFT_CACHE_EXPIRY int `envconfig:"MICROSOFT_CACHE_EXPIRY" default:"15"`
 }
 
 type AsynqConfiguration struct {
-	CONCURRENCY        int `envconfig:"ASYNQ_CONCURRENCY" default:"10"`
+	CONCURRENCY        int `envconfig:"ASYNQ_CONCURRENCY"        default:"10"`
 	FILE_SYNC_INTERVAL int `envconfig:"ASYNQ_FILE_SYNC_INTERVAL" default:"30"`
 }
 
@@ -73,7 +73,7 @@ type OAuthConfiguration struct {
 }
 
 type CookieStoreConfiguration struct {
-	AUTH_KEY       string `envconfig:"COOKIE_STORE_AUTH_KEY" required:"true"`
+	AUTH_KEY       string `envconfig:"COOKIE_STORE_AUTH_KEY"       required:"true"`
 	ENCRYPTION_KEY string `envconfig:"COOKIE_STORE_ENCRYPTION_KEY" required:"true"`
 }
 
@@ -93,6 +93,7 @@ func init() {
 }
 
 func loadEnv() {
+	//nolint:gosec
 	godotenv.Load()
 
 	if err := envconfig.Process("", &APIConfig); err != nil {

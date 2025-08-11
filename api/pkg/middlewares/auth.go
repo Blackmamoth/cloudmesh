@@ -42,6 +42,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 		tokenString := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if tokenString == "" {
 			utils.SendAPIErrorResponse(w, http.StatusUnauthorized, ErrNoToken)
+
 			return
 		}
 
@@ -49,15 +50,19 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 
 		conn, err := m.connPool.Acquire(r.Context())
 		if err != nil {
-			config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+			config.LOGGER.Error(
+				"failed to acquire new connection from connection pool",
+				zap.Error(err),
+			)
 			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, ErrUnexpected)
+
 			return
 		}
 		defer conn.Release()
 
 		publicKeyJWKCache := m.redisClient.Get(r.Context(), "public_key_jwk")
 		if publicKeyJWKCache.Err() != nil {
-			if publicKeyJWKCache.Err() != redis.Nil {
+			if !errors.Is(publicKeyJWKCache.Err(), redis.Nil) {
 				config.LOGGER.Warn("could not fetch public key from redis cache", zap.Error(err))
 			}
 
@@ -65,6 +70,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 			if err != nil {
 				config.LOGGER.Error("could not fetch public key from database", zap.Error(err))
 				utils.SendAPIErrorResponse(w, http.StatusInternalServerError, ErrUnexpected)
+
 				return
 			}
 
@@ -77,6 +83,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 		if err != nil {
 			config.LOGGER.Error("could not parse jwt token", zap.Error(err))
 			utils.SendAPIErrorResponse(w, http.StatusUnauthorized, ErrUnauthorized)
+
 			return
 		}
 
@@ -84,6 +91,7 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 
 		if err := m.checkUserExists(r.Context(), conn, userID); err != nil {
 			utils.SendAPIErrorResponse(w, http.StatusUnauthorized, ErrUnauthorized)
+
 			return
 		}
 
@@ -94,14 +102,18 @@ func (m *AuthMiddleware) VerifyAccessToken(next http.Handler) http.Handler {
 		r = r.WithContext(ctx)
 
 		next.ServeHTTP(w, r)
-
 	})
 }
 
-func (m *AuthMiddleware) checkUserExists(ctx context.Context, conn *pgxpool.Conn, userId string) error {
+func (m *AuthMiddleware) checkUserExists(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	userId string,
+) error {
 	queries := repository.New(conn)
 
 	_, err := queries.GetUserByID(ctx, userId)
+
 	return err
 }
 

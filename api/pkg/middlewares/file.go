@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -37,39 +38,61 @@ func (m *FileMiddleware) CheckFilePayload(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
 			utils.SendAPIErrorResponse(w, http.StatusUnsupportedMediaType,
-				fmt.Errorf("invalid content-type, expected \"multipart/form-data\""))
+				errors.New("invalid content-type, expected \"multipart/form-data\""))
+
 			return
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxTotalUploadSize)
 
 		if err := r.ParseMultipartForm(maxTotalUploadSize); err != nil {
-			utils.SendAPIErrorResponse(w, http.StatusBadRequest,
-				fmt.Errorf("total upload size too large. Max allowed is %dMB. Error: %v", maxTotalUploadSize/1024/1024, err))
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusBadRequest,
+				fmt.Errorf(
+					"total upload size too large. Max allowed is %dMB. Error: %w",
+					maxTotalUploadSize/1024/1024,
+					err,
+				),
+			)
+
 			return
 		}
 
 		files := r.MultipartForm.File[fileFieldName]
 		if len(files) == 0 {
-			utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity,
-				fmt.Errorf("no files found for field '%s'. Please make sure you've uploaded a file(s)", fileFieldName))
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusUnprocessableEntity,
+				fmt.Errorf(
+					"no files found for field '%s'. Please make sure you've uploaded a file(s)",
+					fileFieldName,
+				),
+			)
+
 			return
 		}
 
 		var uploadedFiles []UploadedFile
+
 		for _, fileHeader := range files {
 			file, err := fileHeader.Open()
 			if err != nil {
 				config.LOGGER.Error("could not open uploaded file", zap.Error(err))
 				utils.SendAPIErrorResponse(w, http.StatusInternalServerError,
-					fmt.Errorf("error opening uploaded file '%s': %v", fileHeader.Filename, err))
+					fmt.Errorf("error opening uploaded file '%s': %w", fileHeader.Filename, err))
+
 				return
 			}
 
 			processedFile, err := m.processAndValidateFile(file, fileHeader)
 			if err != nil {
-				file.Close()
+				if err := file.Close(); err != nil {
+					config.LOGGER.Error("failed to close a file", zap.Error(err))
+				}
+
 				utils.SendAPIErrorResponse(w, http.StatusUnprocessableEntity, err)
+
 				return
 			}
 
@@ -79,6 +102,7 @@ func (m *FileMiddleware) CheckFilePayload(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), uploadedFilesKey{}, uploadedFiles)
 
 		neededTime := m.estimateUploadTimeBySize(r)
+
 		ctx, cancel := context.WithTimeout(ctx, neededTime)
 		defer cancel()
 
@@ -88,19 +112,33 @@ func (m *FileMiddleware) CheckFilePayload(next http.Handler) http.Handler {
 	})
 }
 
-func (m *FileMiddleware) processAndValidateFile(file multipart.File, fileHeader *multipart.FileHeader) (*UploadedFile, error) {
+func (m *FileMiddleware) processAndValidateFile(
+	file multipart.File,
+	fileHeader *multipart.FileHeader,
+) (*UploadedFile, error) {
 	buffer := make([]byte, 512)
+
 	_, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
-		config.LOGGER.Error("error reading file", zap.String("file_name", fileHeader.Filename), zap.Error(err))
-		return nil, fmt.Errorf("error reading file '%s': %v", fileHeader.Filename, err)
+	if err != nil && !errors.Is(err, io.EOF) {
+		config.LOGGER.Error(
+			"error reading file",
+			zap.String("file_name", fileHeader.Filename),
+			zap.Error(err),
+		)
+
+		return nil, fmt.Errorf("error reading file '%s': %w", fileHeader.Filename, err)
 	}
 
 	contentType := http.DetectContentType(buffer)
 
 	if _, err := file.Seek(0, 0); err != nil {
-		config.LOGGER.Error("error rewinding file", zap.String("file_name", fileHeader.Filename), zap.Error(err))
-		return nil, fmt.Errorf("error rewinding file '%s': %v", fileHeader.Filename, err)
+		config.LOGGER.Error(
+			"error rewinding file",
+			zap.String("file_name", fileHeader.Filename),
+			zap.Error(err),
+		)
+
+		return nil, fmt.Errorf("error rewinding file '%s': %w", fileHeader.Filename, err)
 	}
 
 	return &UploadedFile{
@@ -112,6 +150,7 @@ func (m *FileMiddleware) processAndValidateFile(file multipart.File, fileHeader 
 
 func (m *FileMiddleware) GetUploadedFiles(ctx context.Context) ([]UploadedFile, bool) {
 	val, ok := ctx.Value(uploadedFilesKey{}).([]UploadedFile)
+
 	return val, ok
 }
 

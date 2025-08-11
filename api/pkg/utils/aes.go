@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 
@@ -15,20 +16,18 @@ func GetAESKey() ([]byte, error) {
 	keyHex := config.AESConfig.MASTER_KEY
 
 	key, err := hex.DecodeString(keyHex)
-
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex string: %v", err)
+		return nil, fmt.Errorf("invalid hex string: %w", err)
 	}
 
 	if len(key) != 32 {
-		return nil, fmt.Errorf("aes master key must be 32 bytes (64 hex characters) for AES-256")
+		return nil, errors.New("aes master key must be 32 bytes (64 hex characters) for AES-256")
 	}
 
 	return key, nil
 }
 
 func Encrypt(plainText string) (string, error) {
-
 	plainTextByte := []byte(plainText)
 
 	key, err := GetAESKey()
@@ -82,10 +81,11 @@ func Decrypt(encryptedText string) (string, error) {
 
 	nonceSize := aesGCM.NonceSize()
 	if len(encryptedText) < nonceSize {
-		return "", fmt.Errorf("cipherText too short")
+		return "", errors.New("cipherText too short")
 	}
 
 	nonce, cipherText := decodedHex[:nonceSize], decodedHex[nonceSize:]
+
 	decrypted, err := aesGCM.Open(nil, nonce, cipherText, nil)
 	if err != nil {
 		return "", err

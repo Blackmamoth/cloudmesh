@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"golang.org/x/oauth2"
 )
 
 type LinkHandler struct {
@@ -73,6 +74,7 @@ func (h *LinkHandler) RegisterRoutes() *chi.Mux {
 
 	r.Get("/{provider}", h.linkAccount)
 	r.Get("/{provider}/callback", h.linkAccountCallback)
+
 	return r
 }
 
@@ -84,6 +86,7 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 	provider, ok := providers.OAuthProviders[providerName]
 	if !ok {
 		h.errorRedirect(w, r)
+
 		return
 	}
 
@@ -91,6 +94,7 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 
 	if state == "" {
 		h.errorRedirect(w, r)
+
 		return
 	}
 
@@ -98,74 +102,199 @@ func (h *LinkHandler) linkAccount(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		config.LOGGER.Error("could not deocde base64 encoded state", zap.Error(err))
 		utils.SendAPIErrorResponse(w, http.StatusBadRequest, err)
+
 		return
 	}
 
 	var oauthState OAuthState
+
 	err = json.Unmarshal(decoded, &oauthState)
 	if err != nil {
 		config.LOGGER.Error("failed to unmarshal into OAuthState", zap.Error(err))
 		h.errorRedirect(w, r)
+
 		return
 	}
 
 	if oauthState.UserID == "" {
 		h.errorRedirect(w, r)
+
 		return
 	}
 
 	if err = h.validateNonce(r.Context(), oauthState.Nonce); err != nil {
 		h.errorRedirect(w, r)
+
 		return
 	}
 
 	consentPageURL, err := provider.GetConsentPageURL(w, r, store, oauthState.UserID)
 	if err != nil {
 		h.errorRedirect(w, r)
+
 		return
 	}
 
 	http.Redirect(w, r, consentPageURL, http.StatusFound)
 }
 
-func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request) {
-	providerName := chi.URLParam(r, "provider")
-
-	providerName = strings.ToLower(providerName)
+func (h *LinkHandler) getProviderFromRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (string, providers.Provider, bool) {
+	providerName := strings.ToLower(chi.URLParam(r, "provider"))
 
 	provider, ok := providers.OAuthProviders[providerName]
 	if !ok {
 		h.errorRedirect(w, r)
+
+		return "", nil, false
+	}
+
+	return providerName, provider, true
+}
+
+func (h *LinkHandler) encryptTokens(
+	w http.ResponseWriter,
+	r *http.Request,
+	token *oauth2.Token,
+) (string, string, error) {
+	encAccess, err := utils.Encrypt(token.AccessToken)
+	if err != nil {
+		h.errorRedirect(w, r)
+
+		return "", "", err
+	}
+
+	encRefresh, err := utils.Encrypt(token.RefreshToken)
+	if err != nil {
+		h.errorRedirect(w, r)
+
+		return "", "", err
+	}
+
+	return encAccess, encRefresh, nil
+}
+
+func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request) {
+	providerName, provider, ok := h.getProviderFromRequest(w, r)
+	if !ok {
 		return
 	}
 
 	token, userId, accountInfo, err := provider.GetToken(w, r, store)
 	if err != nil {
-		config.LOGGER.Error("err", zap.Error(err))
-		h.errorRedirect(w, r)
+		h.logAndRedirectError(w, r, "GetToken failed", providerName, err)
+
 		return
 	}
 
-	encryptedAccessToken, err := utils.Encrypt(token.AccessToken)
+	encryptedAccessToken, encryptedRefreshToken, err := h.encryptTokens(w, r, token)
 	if err != nil {
-		config.LOGGER.Error("failed to encrypt access token", zap.Error(err))
-		h.errorRedirect(w, r)
 		return
 	}
 
-	encryptedRefreshToken, err := utils.Encrypt(token.RefreshToken)
+	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
-		config.LOGGER.Error("failed to encrypt access token", zap.Error(err))
-		h.errorRedirect(w, r)
+		h.logAndRedirectError(w, r, "failed to acquire connection", providerName, err)
+
 		return
 	}
+	defer conn.Release()
+
+	queries := repository.New(conn)
+
+	accountID, successQuery, err := h.upsertAccount(
+		r.Context(), queries, conn, userId, providerName, accountInfo,
+		encryptedAccessToken, encryptedRefreshToken, token,
+	)
+	if err != nil {
+		h.logAndRedirectError(w, r, "account upsert failed", providerName, err)
+
+		return
+	}
+
+	if err = h.scheduleBackgroundJobs(r.Context(), userId, providerName, accountID, token, queries); err != nil {
+		h.logAndRedirectError(w, r, "scheduling jobs failed", providerName, err)
+
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("%s/linked-accounts?successQuery=%s",
+		config.APIConfig.FRONTEND_HOST, successQuery), http.StatusFound)
+}
+
+func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, config.APIConfig.FRONTEND_HOST+"/error", http.StatusFound)
+}
+
+func (h *LinkHandler) logAndRedirectError(
+	w http.ResponseWriter,
+	r *http.Request,
+	msg, provider string,
+	err error,
+) {
+	if provider != "" {
+		config.LOGGER.Error(msg, zap.String("provider", provider), zap.Error(err))
+	} else {
+		config.LOGGER.Error(msg, zap.Error(err))
+	}
+
+	h.errorRedirect(w, r)
+}
+
+func (h *LinkHandler) scheduleBackgroundJobs(
+	ctx context.Context,
+	userID, providerName, accountID string,
+	token *oauth2.Token,
+	queries *repository.Queries,
+) error {
+	asynqClient := db.GetAsynqClient()
+
+	err := h.enqueueFileSyncTaskAndLog(ctx, userID, accountID, providerName, asynqClient, queries)
+	if err != nil {
+		config.LOGGER.Error("enqueueFileSyncTaskAndLog failed", zap.Error(err))
+
+		return err
+	}
+
+	err = h.enqueueAuthTokenRenewalTaskAndLog(
+		ctx,
+		userID,
+		accountID,
+		providerName,
+		time.Duration(token.ExpiresIn),
+		asynqClient,
+		queries,
+	)
+	if err != nil {
+		config.LOGGER.Error("enqueueAuthTokenRenewalTaskAndLog failed", zap.Error(err))
+
+		return err
+	}
+
+	return nil
+}
+
+func (h *LinkHandler) upsertAccount(
+	ctx context.Context,
+	queries *repository.Queries,
+	conn *pgxpool.Conn,
+	userID, providerName string,
+	accountInfo *providers.UserAccountInfo,
+	encAccessToken, encRefreshToken string,
+	token *oauth2.Token,
+) (string, string, error) {
+	var accountID string
+
+	successQuery := "newAccount"
 
 	addCountParams := repository.AddAccountDetailsParams{
-		UserID:         userId,
+		UserID:         userID,
 		Provider:       repository.ProviderEnum(providerName),
 		ProviderUserID: accountInfo.ProviderUserID,
-		AccessToken:    encryptedAccessToken,
-		RefreshToken:   encryptedRefreshToken,
+		AccessToken:    encAccessToken,
+		RefreshToken:   encRefreshToken,
 		TokenType:      db.PGTextField(token.TokenType),
 		Expiry:         db.PGTimestamptzField(token.Expiry),
 		Email:          accountInfo.Email,
@@ -173,128 +302,83 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 		AvatarUrl:      db.PGTextField(accountInfo.AvatarURL),
 	}
 
-	conn, err := h.connPool.Acquire(r.Context())
-	if err != nil {
-		config.LOGGER.Error(
-			"failed to acquire new connection from connection pool",
-			zap.String("provider", providerName),
-			zap.Error(err),
-		)
-		h.errorRedirect(w, r)
-		return
-	}
-	defer conn.Release()
-
-	queries := repository.New(conn)
-
 	existingAccountID, err := queries.GetAccountByProviderID(
-		r.Context(),
+		ctx,
 		repository.GetAccountByProviderIDParams{
-			UserID:         userId,
+			UserID:         userID,
 			Provider:       repository.ProviderEnum(providerName),
 			ProviderUserID: accountInfo.ProviderUserID,
 		},
 	)
 
-	var accountID string
-	successQuery := "newAccount"
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		config.LOGGER.Error("failed to fetch existing account details", zap.Error(err))
 
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
-				qx := queries.WithTx(tx)
+		return "", "", err
+	}
 
-				id, err := qx.AddAccountDetails(r.Context(), addCountParams)
-				if err != nil {
-					return err
-				}
+	if errors.Is(err, sql.ErrNoRows) {
+		err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
+			qx := queries.WithTx(tx)
 
-				accountID = id.String()
-
-				return nil
-			})
+			id, err := qx.AddAccountDetails(ctx, addCountParams)
 			if err != nil {
-				config.LOGGER.Error(
-					"an error occured while inserting account details",
-					zap.String("provider", providerName),
-					zap.Error(err),
-				)
-				h.errorRedirect(w, r)
-				return
+				return err
 			}
-		} else {
-			config.LOGGER.Error("failed to fetch existing account details", zap.Error(err))
-			h.errorRedirect(w, r)
-			return
+
+			accountID = id.String()
+
+			return nil
+		})
+		if err != nil {
+			config.LOGGER.Error("error inserting account details",
+				zap.String("provider", providerName),
+				zap.Error(err))
+
+			return "", "", err
 		}
 	} else {
 		accountID = existingAccountID.String()
 
-		err = utils.WithTransaction(r.Context(), conn, func(tx pgx.Tx) error {
-			qx := queries.WithTx(tx)
-
-			err := qx.UpdateAuthTokens(r.Context(), repository.UpdateAuthTokensParams{
-				AccessToken:  encryptedAccessToken,
-				RefreshToken: encryptedRefreshToken,
+		err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
+			return queries.WithTx(tx).UpdateAuthTokens(ctx, repository.UpdateAuthTokensParams{
+				AccessToken:  encAccessToken,
+				RefreshToken: encRefreshToken,
 				TokenType:    db.PGTextField(token.TokenType),
 				Expiry:       db.PGTimestamptzField(token.Expiry),
 				AccountID:    existingAccountID,
 			})
-
-			return err
 		})
 		if err != nil {
-			config.LOGGER.Error("an error occured while updating auth tokens", zap.String("provider", providerName), zap.Error(err))
-			h.errorRedirect(w, r)
-			return
+			config.LOGGER.Error("error updating auth tokens",
+				zap.String("provider", providerName),
+				zap.Error(err))
+
+			return "", "", err
 		}
 
 		successQuery = "existingAccount"
 	}
 
-	asynqClient := db.GetAsynqClient()
-
-	if err = h.enqueueFileSyncTaskAndLog(r.Context(), userId, accountID, providerName, asynqClient, queries); err != nil {
-		config.LOGGER.Error("enqueueFileSyncTaskAndLog failed", zap.Error(err))
-		h.errorRedirect(w, r)
-		return
-	}
-
-	if err = h.enqueueAuthTokenRenewalTaskAndLog(r.Context(), userId, accountID, providerName, time.Duration(token.ExpiresIn), asynqClient, queries); err != nil {
-		config.LOGGER.Error("enqueueAuthTokenRenewalTaskAndLog failed", zap.Error(err))
-		h.errorRedirect(w, r)
-		return
-	}
-
-	http.Redirect(
-		w,
-		r,
-		fmt.Sprintf(
-			"%s/linked-accounts?successQuery=%s",
-			config.APIConfig.FRONTEND_HOST,
-			successQuery,
-		),
-		http.StatusFound,
-	)
-}
-
-func (h *LinkHandler) errorRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, fmt.Sprintf("%s/error", config.APIConfig.FRONTEND_HOST), http.StatusFound)
+	return accountID, successQuery, nil
 }
 
 func (h *LinkHandler) validateNonce(ctx context.Context, nonce string) error {
-	key := fmt.Sprintf("link-nonce:%s", nonce)
+	key := "link-nonce:" + nonce
+
 	val, err := h.redisClient.Get(ctx, key).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("nonce not found or expired")
+		if errors.Is(err, redis.Nil) {
+			return errors.New("nonce not found or expired")
 		}
+
 		config.LOGGER.Error("error querying redis for nonce", zap.Error(err))
+
 		return err
 	}
 
 	if val != nonce {
-		return fmt.Errorf("nonce mismatch")
+		return errors.New("nonce mismatch")
 	}
 
 	if delErr := h.redisClient.Del(ctx, key).Err(); delErr != nil {
@@ -318,6 +402,7 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 			zap.String("task_type", tasks.TypeFileSync),
 			zap.Error(err),
 		)
+
 		return err
 	}
 
@@ -329,6 +414,7 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 			zap.String("task_type", tasks.TypeFileSync),
 			zap.Error(err),
 		)
+
 		return err
 	}
 
@@ -347,6 +433,7 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 			zap.String("provider", providerName),
 			zap.Error(err),
 		)
+
 		return nil
 	}
 
@@ -358,6 +445,7 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 			zap.String("accountID", accountID),
 			zap.Error(err),
 		)
+
 		return nil
 	}
 
@@ -378,6 +466,7 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 			zap.String("queue", info.Queue),
 			zap.Error(err),
 		)
+
 		return err
 	}
 
@@ -399,6 +488,7 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 			zap.String("task_type", tasks.TypeAuthTokenRenewal),
 			zap.Error(err),
 		)
+
 		return err
 	}
 
@@ -410,6 +500,7 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 			zap.String("task_type", tasks.TypeAuthTokenRenewal),
 			zap.Error(err),
 		)
+
 		return err
 	}
 
@@ -428,6 +519,7 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 			zap.String("provider", providerName),
 			zap.Error(err),
 		)
+
 		return nil
 	}
 
@@ -439,6 +531,7 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 			zap.String("accountID", accountID),
 			zap.Error(err),
 		)
+
 		return nil
 	}
 
@@ -459,6 +552,7 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 			zap.String("queue", info.Queue),
 			zap.Error(err),
 		)
+
 		return err
 	}
 

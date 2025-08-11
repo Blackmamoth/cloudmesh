@@ -13,13 +13,19 @@ import (
 
 func BuildSearchCacheKey(provider, accountID, searchText string) string {
 	h := sha256.New()
+	//nolint:errcheck
 	h.Write([]byte(searchText))
 	hash := hex.EncodeToString(h.Sum(nil))[:10]
 
 	return fmt.Sprintf("search_cache:%s:%s:%s", provider, accountID, hash)
 }
 
-func CacheProviderFileIDs(ctx context.Context, key string, values []string, ttl time.Duration) error {
+func CacheProviderFileIDs(
+	ctx context.Context,
+	key string,
+	values []string,
+	ttl time.Duration,
+) error {
 	data, err := json.Marshal(values)
 	if err != nil {
 		return err
@@ -31,7 +37,6 @@ func CacheProviderFileIDs(ctx context.Context, key string, values []string, ttl 
 }
 
 func GetCachedProviderFileIDs(ctx context.Context, key string) ([]string, error) {
-
 	redisClient := db.GetRedisClient()
 
 	val, err := redisClient.Get(ctx, key).Result()
@@ -40,19 +45,22 @@ func GetCachedProviderFileIDs(ctx context.Context, key string) ([]string, error)
 	}
 
 	var result []string
+
 	err = json.Unmarshal([]byte(val), &result)
 
 	return result, err
 }
 
 func DeleteKeysByPattern(ctx context.Context, pattern string) error {
-
 	redisClient := db.GetRedisClient()
 
 	var cursor uint64
+
 	for {
-		var keys []string
-		var err error
+		var (
+			keys []string
+			err  error
+		)
 
 		keys, cursor, err = redisClient.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
@@ -69,5 +77,6 @@ func DeleteKeysByPattern(ctx context.Context, pattern string) error {
 			break
 		}
 	}
+
 	return nil
 }
