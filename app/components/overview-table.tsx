@@ -84,7 +84,8 @@ import googledrivelogo from "@/public/google-drive-logo.webp";
 import onedrivelogo from "@/public/onedrive-logo.webp";
 import dropboxlogo from "@/public/dropbox-logo.png";
 import Image from "next/image";
-import { Image as ImageIcon, FileText, Video, FileSpreadsheet, Presentation, FileImage, Download, File, ScrollText, Plus, Upload, CloudUpload } from "lucide-react";
+import { Image as ImageIcon, FileText, Video, FileSpreadsheet, Presentation, FileImage, Download, File, ScrollText } from "lucide-react";
+import AddItemDialog from "@/components/add-item-dialog";
 import Link from "next/link";
 type Item = {
   id: string;
@@ -246,29 +247,9 @@ export default function OverviewTable() {
     },
   ]);
 
-  const [data, setData] = useState<Item[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // File upload dialog state
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [selectedAccount, setSelectedAccount] = useState<string>("");
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Mock cloud accounts
-  const cloudAccounts = [
-    { id: "gdrive-1", name: "john.doe@gmail.com", provider: "Google Drive", logo: googledrivelogo },
-    { id: "gdrive-2", name: "work@company.com", provider: "Google Drive", logo: googledrivelogo },
-    { id: "onedrive-1", name: "john.doe@outlook.com", provider: "OneDrive", logo: onedrivelogo },
-    { id: "dropbox-1", name: "john.doe@dropbox.com", provider: "Dropbox", logo: dropboxlogo },
-  ];
-
-  const columns = useMemo(() => getColumns({ data, setData }), [data]);
-
-  useEffect(() => {
-    // Transform mockTrashItems to match Item structure
-    const transformedData: Item[] = mockTrashItems.map((item) => ({
+  const [data, setData] = useState<Item[]>(() => {
+    // Transform mockTrashItems to match Item structure during initialization
+    return mockTrashItems.map((item) => ({
       id: item.id,
       image: item.owner?.avatar || "/user.png",
       name: item.name,
@@ -289,74 +270,14 @@ export default function OverviewTable() {
       },
       originalPath: item.originalPath,
     }));
-    
-    setData(transformedData);
-    setIsLoading(false);
-  }, []);
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
-  // File upload functions
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files) return;
-    
-    const newFiles = Array.from(files).filter(file => {
-      // Check individual file size (50MB limit)
-      if (file.size > 50 * 1024 * 1024) {
-        alert(`File "${file.name}" exceeds 50MB limit`);
-        return false;
-      }
-      return true;
-    });
 
-    const updatedFiles = [...selectedFiles, ...newFiles];
-    
-    // Check total size (500MB limit)
-    const totalSize = updatedFiles.reduce((sum, file) => sum + file.size, 0);
-    if (totalSize > 500 * 1024 * 1024) {
-      alert("Total file size exceeds 500MB limit");
-      return;
-    }
 
-    setSelectedFiles(updatedFiles);
-  };
+  const columns = useMemo(() => getColumns({ data, setData }), [data]);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    handleFileSelect(e.dataTransfer.files);
-  };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const getTotalSize = () => {
-    return selectedFiles.reduce((sum, file) => sum + file.size, 0);
-  };
-
-  const handleUpload = () => {
-    // Reset state since this is UI only
-    setSelectedFiles([]);
-    setSelectedAccount("");
-    setUploadDialogOpen(false);
-    // You could show a success message here
-    alert("Files uploaded successfully! (UI Demo)");
-  };
-
-  const resetUploadDialog = () => {
-    setSelectedFiles([]);
-    setSelectedAccount("");
-    setIsDragOver(false);
-  };
 
   const handleDeleteRows = () => {
     const selectedRows = table.getSelectedRowModel().rows;
@@ -464,146 +385,8 @@ export default function OverviewTable() {
             </AlertDialog>
           )}
           
-          {/* Upload Files Dialog */}
-          <AlertDialog open={uploadDialogOpen} onOpenChange={(open) => {
-            setUploadDialogOpen(open);
-            if (!open) resetUploadDialog();
-          }}>
-            <AlertDialogTrigger asChild>
-              <Button variant="default">
-                <Plus className="size-5 -ms-1.5 text-white" />
-                Add New Files
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent className="min-w-[600px] min-h-[700px]">
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2">
-                  <Upload className="size-5" />
-                  Upload Files
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  Upload files to your connected cloud storage accounts
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              
-              <div className="space-y-4">
-                {/* Select Account */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Select Account</label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" className="w-full justify-between h-12">
-                        {selectedAccount ? (
-                          <div className="flex items-center gap-2">
-                            <Image 
-                              src={cloudAccounts.find(acc => acc.id === selectedAccount)?.logo || googledrivelogo} 
-                              alt="Provider" 
-                              className="w-5 h-5" 
-                            />
-                            <span>{cloudAccounts.find(acc => acc.id === selectedAccount)?.name}</span>
-                            <Badge variant="secondary" className="text-xs">
-                              {cloudAccounts.find(acc => acc.id === selectedAccount)?.provider}
-                            </Badge>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Choose a cloud storage account</span>
-                        )}
-                        <RiArrowDownSLine className="h-4 w-4 opacity-50" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-full min-w-[500px]">
-                      {cloudAccounts.map((account) => (
-                        <DropdownMenuItem
-                          key={account.id}
-                          onClick={() => setSelectedAccount(account.id)}
-                          className="flex items-center gap-3 p-3"
-                        >
-                          <Image src={account.logo} alt={account.provider} className="w-5 h-5" />
-                          <div className="flex flex-col">
-                            <span className="font-medium">{account.name}</span>
-                            <span className="text-xs text-muted-foreground">{account.provider}</span>
-                          </div>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-
-                {/* Select Files */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Select Files</label>
-                  <div
-                    className={cn(
-                      "border-2 border-dashed rounded-lg p-4 text-center transition-colors",
-                      isDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25"
-                    )}
-                    onDrop={handleDrop}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => handleFileSelect(e.target.files)}
-                    />
-                    <div className="flex flex-col items-center gap-2">
-                      <CloudUpload className="size-8 text-muted-foreground" />
-                      <p className="text-sm font-medium">Click to upload files or drag and drop</p>
-                      <p className="text-xs text-muted-foreground">Maximum: 50MB per file, 500MB total</p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="mt-4"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      Choose Files
-                    </Button>
-                  </div>
-
-                  {/* Selected Files List */}
-                  {selectedFiles.length > 0 && (
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      <div className="text-sm font-medium">Selected Files:</div>
-                      {selectedFiles.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-2 bg-muted rounded">
-                          <div className="flex items-center gap-2">
-                            <File className="size-4" />
-                            <span className="text-sm truncate">{file.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              ({formatFileSize(file.size)})
-                            </span>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => removeFile(index)}
-                          >
-                            <RiCloseCircleLine className="size-4" />
-                          </Button>
-                        </div>
-                      ))}
-                      <div className="text-xs text-muted-foreground border-t pt-2">
-                        Total: {formatFileSize(getTotalSize())} / 500MB
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel onClick={resetUploadDialog}>Cancel</AlertDialogCancel>
-                <AlertDialogAction 
-                  onClick={handleUpload}
-                  disabled={!selectedAccount || selectedFiles.length === 0}
-                >
-                  Upload {selectedFiles.length} File{selectedFiles.length !== 1 ? 's' : ''}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {/* Add button */}
+          <AddItemDialog />
         </div>
       </div>
 
@@ -810,6 +593,22 @@ const getFileTypeIcon = (type: string) => {
 };
 
 // Function to format file size in human-readable format
+const truncateFileName = (fileName: string, maxLength: number = 20): string => {
+  if (fileName.length <= maxLength) return fileName;
+  
+  const extension = fileName.split('.').pop();
+  const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+  
+  // Calculate how much space we need for the extension
+  const extensionLength = extension ? extension.length + 1 : 0; // +1 for the dot
+  const availableLength = maxLength - extensionLength - 3; // -3 for the ellipsis
+  
+  if (availableLength < 1) return fileName; // If too short, return original
+  
+  const truncatedName = nameWithoutExt.substring(0, availableLength) + '...';
+  return extension ? `${truncatedName}.${extension}` : truncatedName;
+};
+
 const formatFileSize = (bytes: number): string => {
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   if (bytes === 0) return '0 Bytes';

@@ -1,5 +1,5 @@
 'use client'
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,10 +25,13 @@ import dropboxlogo from "@/public/dropbox-logo.png"
 import googledrivelogo from "@/public/google-drive-logo.webp"
 import onedrivelogo from "@/public/onedrive-logo.webp"
 import { env } from '@/lib/env'
+import { useQuery } from '@tanstack/react-query'
+import { AccountResponse, AccountsByProvider } from '@/lib/types/account'
+import { getJwtToken } from '@/lib/token'
 
 type AccountStatus = 'healthy' | 'error' | 'syncing'
 
-interface Account {
+interface AccountUI {
   id: string
   name: string
   email: string
@@ -43,69 +46,23 @@ interface Account {
   errorMessage?: string
 }
 
-interface Provider {
+interface ProviderUI {
   name: string
   logo: any
-  accounts: Account[]
+  accounts: AccountUI[]
 }
 
-const linkedAccountsData: Provider[] = [
-  {
-    name: 'Dropbox',
-    logo: dropboxlogo,
-    accounts: [
-      {
-        id: '1',
-        name: 'Jane Smith',
-        email: 'jane.smith@example.com',
-        avatar: '/user.png',
-        status: 'error',
-        storage: { used: 1.8, total: 2.0, unit: 'GB' },
-        lastSynced: '746 days ago',
-        errorMessage: 'Authentication token expired'
-      }
-    ]
-  },
-  {
-    name: 'Google Drive',
-    logo: googledrivelogo,
-    accounts: [
-      {
-        id: '2',
-        name: 'John Doe',
-        email: 'john.doe@gmail.com',
-        avatar: '/user.png',
-        status: 'healthy',
-        storage: { used: 3.1, total: 15.0, unit: 'GB' },
-        lastSynced: '744 days ago'
-      },
-      {
-        id: '3',
-        name: 'Work Account',
-        email: 'john.doe@company.com',
-        avatar: '/user.png',
-        status: 'syncing',
-        storage: { used: 18.0, total: 30.0, unit: 'GB' },
-        lastSynced: 'Syncing now...'
-      }
-    ]
-  },
-  {
-    name: 'OneDrive',
-    logo: onedrivelogo,
-    accounts: [
-      {
-        id: '4',
-        name: 'Alex Johnson',
-        email: 'alex.johnson@outlook.com',
-        avatar: '/user.png',
-        status: 'healthy',
-        storage: { used: 512, total: 5.0, unit: 'MB' },
-        lastSynced: '745 days ago'
-      }
-    ]
-  }
-]
+// helper: bytes to GB (2 decimals)
+const bytesToGB = (bytes: number) => {
+  const gb = bytes / (1024 * 1024 * 1024)
+  return Math.round(gb * 100) / 100
+}
+
+const PROVIDER_META: Record<string, { label: string; logo: any }> = {
+  google: { label: 'Google Drive', logo: googledrivelogo },
+  dropbox: { label: 'Dropbox', logo: dropboxlogo },
+  onedrive: { label: 'OneDrive', logo: onedrivelogo },
+}
 
 // Provider options for the dialog
 const availableProviders = [
@@ -277,7 +234,7 @@ const getProgressColor = (percentage: number) => {
   return '#10b981' // green
 }
 
-function AccountCard({ account }: { account: Account }) {
+function AccountCard({ account }: { account: AccountUI }) {
   const percentage = getStoragePercentage(account.storage.used, account.storage.total, account.storage.unit)
 
   return (
@@ -369,7 +326,7 @@ function AccountCard({ account }: { account: Account }) {
   )
 }
 
-function ProviderSection({ provider }: { provider: Provider }) {
+function ProviderSection({ provider }: { provider: ProviderUI }) {
   return (
     <div className="space-y-4">
       {/* Provider Header */}
@@ -398,6 +355,52 @@ function ProviderSection({ provider }: { provider: Provider }) {
 }
 
 const LinkedAccounts = () => {
+  const fetchAccounts = async () => {
+    const accessToken = await getJwtToken()
+    if (!accessToken?.token) return null
+    const res = await fetch('/api/accounts', {
+      headers: {
+        'access_token': accessToken.token,
+      },
+    })
+    return (await res.json()) as AccountResponse
+  }
+
+  const { data: response, isLoading } = useQuery<AccountResponse>({
+    queryKey: ['linked-accounts'],
+    queryFn: fetchAccounts,
+  })
+
+  const providers: ProviderUI[] = useMemo(() => {
+    const accountsByProvider: AccountsByProvider | undefined = response?.data?.data?.accounts
+    if (!accountsByProvider) return []
+
+    const result: ProviderUI[] = []
+    Object.entries(PROVIDER_META).forEach(([key, meta]) => {
+      const accounts = accountsByProvider[key]
+      if (accounts && accounts.length > 0) {
+        result.push({
+          name: meta.label,
+          logo: meta.logo,
+          accounts: accounts.map((a) => ({
+            id: a.id,
+            name: a.name,
+            email: a.email,
+            avatar: a.avatar_url || '/user.png',
+            status: 'healthy',
+            storage: {
+              used: bytesToGB(a.used_storage),
+              total: bytesToGB(a.total_storage),
+              unit: 'GB',
+            },
+            lastSynced: a.last_synced_at ? new Date(a.last_synced_at).toLocaleString() : '—',
+          })),
+        })
+      }
+    })
+    return result
+  }, [response])
+
   return (
     <div className="flex flex-col gap-4 flex-1 col-span-3 p-4">
       <div className="flex flex-col gap-4">
@@ -416,12 +419,17 @@ const LinkedAccounts = () => {
         </div>
       </div>
 
-      {/* Providers */}
-      <div className="space-y-8">
-        {linkedAccountsData.map((provider) => (
-          <ProviderSection key={provider.name} provider={provider} />
-        ))}
-      </div>
+      {isLoading ? (
+        <div>Loading...</div>
+      ) : providers.length === 0 ? (
+        <div className="text-sm text-muted-foreground">No connected accounts yet.</div>
+      ) : (
+        <div className="space-y-8">
+          {providers.map((provider) => (
+            <ProviderSection key={provider.name} provider={provider} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
