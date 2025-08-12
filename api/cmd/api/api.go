@@ -45,7 +45,11 @@ func (s *APIServer) Run() error {
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS", "HEAD"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
+		MaxAge:           300,
 	}))
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
