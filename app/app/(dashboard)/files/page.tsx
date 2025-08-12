@@ -1,7 +1,7 @@
+"use client"
 import React from 'react'
-import FileTable from '@/components/file-table'
-
-const Files = () => {
+import FileTable from '@/components/FileTable/FileTable'
+const Files = () => { 
   return (
     <div className="flex flex-col gap-4 flex-1 col-span-3 p-4">
       <div className="flex flex-col gap-4">
