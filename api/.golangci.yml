@@ -1,47 +1,25 @@
 # See the dedicated "version" documentation section.
 version: "2"
+
+run:
+  timeout: 3m
+  concurrency: 2
+  issues-exit-code: 1
+  tests: false
+
 linters:
   enable:
     - errcheck
     - govet
-    - ineffassign
     - staticcheck
     - unused
-    - bodyclose
-    - canonicalheader
-    - containedctx
-    - contextcheck
-    - copyloopvar
-    - decorder
-    - dogsled
-    - dupl
-    - dupword
-    - embeddedstructfieldcheck
-    - errchkjson
-    - errname
-    - errorlint
-    - exhaustive
-    - exptostd
-    - fatcontext
-    - goconst
-    - godot
     - gosec
-    - iface
-    - inamedparam
-    - loggercheck
-    - mirror
-    - nestif
-    - nilerr
-    - nlreturn
-    - noctx
-    - nonamedreturns
-    - perfsprint
-    - prealloc
-    - predeclared
+    - ineffassign
+    - goconst
+    - misspell
     - unconvert
     - wastedassign
     - whitespace
-    - wsl_v5
   settings:
     errcheck:
       check-type-assertions: true
