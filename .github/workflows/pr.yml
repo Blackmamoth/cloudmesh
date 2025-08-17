@@ -31,7 +31,7 @@ jobs:
               run: go mod tidy
 
             - name: Lint
-              run: golangci-lint run ./...
+              run: golangci-lint run
 
     # app-checks:
     #     name: API (Next.js) checks
