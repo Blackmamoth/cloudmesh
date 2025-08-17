@@ -35,3 +35,11 @@ dev:
 	@pnpm -C app db:generate
 	@pnpm -C app db:migrate
 	$(MAKE) migration-up
+
+lint:
+	@cd api && golangci-lint run --fix
+	# @pnpm -C app lint
+
+format:
+	@cd api && golangci-lint fmt
+	# @pnpm -C app format

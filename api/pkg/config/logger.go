@@ -16,6 +16,7 @@ func init() {
 }
 
 func initializeLogger() {
+	//nolint:gosec
 	godotenv.Load()
 
 	encoderCfg := zap.NewProductionEncoderConfig()

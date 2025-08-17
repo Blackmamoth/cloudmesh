@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -31,7 +31,10 @@ type AccountDetail struct {
 	UsedStorage  int64              `json:"used_storage"`
 }
 
-func NewAccountHandler(connPool *pgxpool.Pool, authMiddleware *middlewares.AuthMiddleware) *AccountHandler {
+func NewAccountHandler(
+	connPool *pgxpool.Pool,
+	authMiddleware *middlewares.AuthMiddleware,
+) *AccountHandler {
 	return &AccountHandler{
 		connPool:       connPool,
 		authMiddleware: authMiddleware,
@@ -49,12 +52,27 @@ func (h *AccountHandler) RegisterRoutes() *chi.Mux {
 }
 
 func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value(middlewares.UserKey).(string)
+	userID, ok := r.Context().Value(middlewares.UserKey).(string)
+	if !ok {
+		config.LOGGER.Error("invalid userid", zap.Any("user_id_received", userID))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusBadRequest,
+			errors.New("could not validate user credentials"),
+		)
+
+		return
+	}
 
 	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
-		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			errors.New("failed to process your request, please try again later"),
+		)
+
 		return
 	}
 	defer conn.Release()
@@ -63,8 +81,17 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 
 	accountDetails, err := queries.GetLinkedAccountsByUserID(r.Context(), userID)
 	if err != nil {
-		config.LOGGER.Error("failed to fetch account details", zap.String("user_id", userID), zap.Error(err))
-		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
+		config.LOGGER.Error(
+			"failed to fetch account details",
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			errors.New("failed to process your request, please try again later"),
+		)
+
 		return
 	}
 
@@ -73,10 +100,21 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 	for _, account := range accountDetails {
 		provider := providers.OAuthProviders[string(account.Provider)]
 
-		storageQuota, err := provider.GetStorageQuota(r.Context(), userID, &account.ID, account.AccessToken, account.RefreshToken)
+		storageQuota, err := provider.GetStorageQuota(
+			r.Context(),
+			userID,
+			&account.ID,
+			account.AccessToken,
+			account.RefreshToken,
+		)
 		if err != nil {
 			config.LOGGER.Error("failed to get storage quota", zap.Error(err))
-			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusInternalServerError,
+				errors.New("failed to process your request, please try again later"),
+			)
+
 			return
 		}
 
@@ -94,8 +132,17 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 
 	lastSyncedTime, err := queries.GetLatestSyncTimeByUserID(r.Context(), userID)
 	if err != nil {
-		config.LOGGER.Error("failed to fetch latest sync time", zap.String("user_id", userID), zap.Error(err))
-		utils.SendAPIErrorResponse(w, http.StatusInternalServerError, fmt.Errorf("failed to process your request, please try again later"))
+		config.LOGGER.Error(
+			"failed to fetch latest sync time",
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			errors.New("failed to process your request, please try again later"),
+		)
+
 		return
 	}
 
@@ -112,7 +159,7 @@ func (h *AccountHandler) groupAccountsByProvider(
 	grouped := make(map[string][]AccountDetail)
 
 	for _, acc := range accounts {
-		grouped[string(acc.Provider)] = append(grouped[string(acc.Provider)], acc)
+		grouped[acc.Provider] = append(grouped[acc.Provider], acc)
 	}
 
 	return grouped

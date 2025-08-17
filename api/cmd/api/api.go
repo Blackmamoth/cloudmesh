@@ -82,7 +82,15 @@ func (s *APIServer) Run() error {
 		zap.String("addr", s.addr),
 	)
 
-	return http.ListenAndServe(fmt.Sprintf("%s:%s", s.host, s.addr), r)
+	srv := &http.Server{
+		Addr:         fmt.Sprintf("%s:%s", s.host, s.addr),
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	return srv.ListenAndServe()
 }
 
 func (s *APIServer) registerRoutes() *chi.Mux {

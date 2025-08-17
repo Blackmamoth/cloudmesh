@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 type JWTClaims struct {
 	jwt.RegisteredClaims
+
 	UserID        string    `json:"id"`
 	Name          string    `json:"name"`
 	Email         string    `json:"email"`
@@ -32,8 +34,12 @@ type JWK struct {
 	KTY string `json:"kty"`
 }
 
-func ParseJWT(tokenString, publicKeyJWK string) (*JWTClaims, error) {
+var (
+	ErrUnexpectedSigningMethod = errors.New("unexpected signing method")
+	ErrInvalidToken            = errors.New("invalid token")
+)
 
+func ParseJWT(tokenString, publicKeyJWK string) (*JWTClaims, error) {
 	var jwk JWK
 
 	if err := json.Unmarshal([]byte(publicKeyJWK), &jwk); err != nil {
@@ -49,8 +55,9 @@ func ParseJWT(tokenString, publicKeyJWK string) (*JWTClaims, error) {
 
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != jwt.SigningMethodEdDSA.Alg() {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			return nil, fmt.Errorf("%w: %v", ErrUnexpectedSigningMethod, t.Header["alg"])
 		}
+
 		return publicKey, nil
 	})
 	if err != nil {
@@ -60,5 +67,6 @@ func ParseJWT(tokenString, publicKeyJWK string) (*JWTClaims, error) {
 	if claims, ok := token.Claims.(*JWTClaims); ok && token.Valid {
 		return claims, nil
 	}
-	return nil, fmt.Errorf("invalid token")
+
+	return nil, ErrInvalidToken
 }

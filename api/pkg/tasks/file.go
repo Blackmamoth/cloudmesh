@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,14 +30,14 @@ func NewFileSyncTask(userID, accountID string) (*asynq.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return asynq.NewTask(TypeFileSync, payload), nil
 }
 
 func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
-
 	var p FileSyncPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		return fmt.Errorf("file to unmarshal task payload: %v", err)
+		return fmt.Errorf("file to unmarshal task payload: %w", err)
 	}
 
 	_, connPool := db.GetPGClient()
@@ -44,7 +45,8 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 	conn, err := connPool.Acquire(ctx)
 	if err != nil {
 		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
-		return fmt.Errorf("failed to acquire new connection from connection pool: %v", err)
+
+		return fmt.Errorf("failed to acquire new connection from connection pool: %w", err)
 	}
 	defer conn.Release()
 
@@ -59,36 +61,44 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 			StartedAt: db.PGTimestamptzField(time.Now()),
 			JobID:     jobID,
 		})
-
 		if err != nil {
-			config.LOGGER.Error("failed to insert start log for job", zap.String("job_id", jobID), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to insert start log for job",
+				zap.String("job_id", jobID),
+				zap.Error(err),
+			)
 		}
 	} else {
 		err = queries.UpdateJobLogRetryCount(ctx, repository.UpdateJobLogRetryCountParams{
+			// #nosec G115 -- retryCount is bounded and will never exceed int32
 			Retries: db.PGInt4Field(int32(retryCount)),
 			JobID:   jobID,
 		})
-
 		if err != nil {
 			config.LOGGER.Error("failed to insert retry count log for job", zap.String("job_id", jobID), zap.Int("retry_count", retryCount), zap.Error(err))
 		}
 	}
 
 	accountID, err := db.PGUUID(p.AccountID)
-
 	if err != nil {
 		config.LOGGER.Error("failed to parse UUID string", zap.Error(err))
-		return fmt.Errorf("failed to parse UUID string")
+
+		return errors.New("failed to parse UUID string")
 	}
 
 	authToken, err := queries.GetAuthTokens(ctx, repository.GetAuthTokensParams{
 		UserID:    p.UserID,
 		AccountID: *accountID,
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to fetch auth tokens from db", zap.Error(err), zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
-		return fmt.Errorf("failed to fetch auth tokens from db: %v", err)
+		config.LOGGER.Error(
+			"failed to fetch auth tokens from db",
+			zap.Error(err),
+			zap.String("user_id", p.UserID),
+			zap.String("account_id", p.AccountID),
+		)
+
+		return fmt.Errorf("failed to fetch auth tokens from db: %w", err)
 	}
 
 	provider, ok := providers.OAuthProviders[string(authToken.Provider)]
@@ -98,16 +108,17 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 	}
 
 	err = provider.SyncFiles(ctx, conn, *accountID, authToken)
-
 	if err != nil {
-
 		dbErr := queries.UpdateJobLogFailed(ctx, repository.UpdateJobLogFailedParams{
 			Error: db.PGTextField(err.Error()),
 			JobID: jobID,
 		})
-
 		if dbErr != nil {
-			config.LOGGER.Error("failed to insert failed log for job", zap.String("job_id", jobID), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to insert failed log for job",
+				zap.String("job_id", jobID),
+				zap.Error(err),
+			)
 		}
 
 		return err
@@ -117,25 +128,40 @@ func HandleFileSyncTask(ctx context.Context, t *asynq.Task) error {
 		FinishedAt: db.PGTimestamptzField(time.Now()),
 		JobID:      jobID,
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to insert finish log for job", zap.String("job_id", jobID), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to insert finish log for job",
+			zap.String("job_id", jobID),
+			zap.Error(err),
+		)
 	}
 
 	newTask, err := NewFileSyncTask(p.UserID, p.AccountID)
-
 	if err == nil {
 		asynqclient := db.GetAsynqClient()
 
-		processAt := time.Now().Add(time.Duration(config.AsynqConfig.FILE_SYNC_INTERVAL) * time.Minute)
+		processAt := time.Now().
+			Add(time.Duration(config.AsynqConfig.FILE_SYNC_INTERVAL) * time.Minute)
 
-		asynqclient.Enqueue(newTask, asynq.ProcessAt(processAt), asynq.Unique(6*time.Minute))
+		if _, err := asynqclient.Enqueue(newTask, asynq.ProcessAt(processAt), asynq.Unique(6*time.Minute)); err != nil {
+			config.LOGGER.Error("failed to enqueue new file sync task", zap.Error(err))
+		}
 	}
 
 	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", authToken.Provider, p.AccountID)); err != nil {
-		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", string(authToken.Provider)), zap.String("account_id", p.AccountID), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to delete cache for content search results",
+			zap.String("provider", string(authToken.Provider)),
+			zap.String("account_id", p.AccountID),
+			zap.Error(err),
+		)
 	}
 
-	config.LOGGER.Info("worker completed synching files to the db", zap.String("user_id", p.UserID), zap.String("account_id", p.AccountID))
+	config.LOGGER.Info(
+		"worker completed synching files to the db",
+		zap.String("user_id", p.UserID),
+		zap.String("account_id", p.AccountID),
+	)
+
 	return nil
 }

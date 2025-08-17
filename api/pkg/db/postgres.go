@@ -52,6 +52,7 @@ func pingPostgresConnection(connPool *pgxpool.Pool) error {
 	}
 
 	defer conn.Release()
+
 	return conn.Ping(context.Background())
 }
 

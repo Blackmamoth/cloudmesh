@@ -125,6 +125,8 @@ type DropboxSpaceUsageResponse struct {
 
 const (
 	DROPBOX_SESSION_NAME         = "cloudmesh-dropbox-oauth-session"
+	DROPBOX_VERIFIER_KEY         = "pkce_verifier_dropbox"
+	DROPBOX_CSRF_KEY             = "oauth_csrf_token_dropbox"
 	DROPBOX_PROVIDER_NAME        = string(repository.ProviderEnumDropbox)
 	DROPBOX_CONTENT_API_BASE_URL = "https://content.dropboxapi.com"
 	DROPBOX_API_BASE_URL         = "https://api.dropboxapi.com"
@@ -142,111 +144,69 @@ func NewDropboxProvider() *DropboxProvider {
 	}
 }
 
-func (p *DropboxProvider) GetConsentPageURL(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore, userID string) (string, error) {
-
-	verifier := oauth2.GenerateVerifier()
-
-	encodedState, oauthState, err := GenerateOauthState(userID)
-	if err != nil {
-		config.LOGGER.Error("failed to generated encoded oauthstate", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	session, err := store.Get(r, DROPBOX_SESSION_NAME)
-	if err != nil {
-		config.LOGGER.Error("could not get or create session from cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	session.Values["pkce_verifier_dropbox"] = verifier
-	session.Values["oauth_csrf_token_dropbox"] = oauthState.CsrfToken
-
-	err = session.Save(r, w)
-	if err != nil {
-		config.LOGGER.Error("failed to save session in cookie store", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return "", err
-	}
-
-	url := p.Config.AuthCodeURL(encodedState, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("prompt", "consent"), oauth2.SetAuthURLParam("token_access_type", "offline"))
-
-	return url, nil
+func (p *DropboxProvider) GetConsentPageURL(
+	w http.ResponseWriter,
+	r *http.Request,
+	store *sessions.CookieStore,
+	userID string,
+) (string, error) {
+	return getConsentPageURL(
+		userID,
+		DROPBOX_PROVIDER_NAME,
+		DROPBOX_SESSION_NAME,
+		DROPBOX_VERIFIER_KEY,
+		DROPBOX_CSRF_KEY,
+		w,
+		r,
+		&p.Config,
+		store,
+	)
 }
 
-func (p *DropboxProvider) GetToken(w http.ResponseWriter, r *http.Request, store *sessions.CookieStore) (*oauth2.Token, string, *UserAccountInfo, error) {
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		return nil, "", nil, ErrNoCode
-	}
-
-	receivedEncodedState := r.URL.Query().Get("state")
-	if receivedEncodedState == "" {
-		return nil, "", nil, ErrNoState
-	}
-
-	receivedOauthState, err := DecodeOauthState(receivedEncodedState)
-	if err != nil {
-		config.LOGGER.Error("failed to decode received state", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return nil, "", nil, fmt.Errorf("failed to decode received state")
-	}
-
-	session, err := store.Get(r, DROPBOX_SESSION_NAME)
-	if err != nil {
-		return nil, "", nil, ErrNoSession
-	}
-
-	storedVerifier, ok := session.Values["pkce_verifier_dropbox"].(string)
-	if !ok || storedVerifier == "" {
-		return nil, "", nil, ErrNoVerifier
-	}
-
-	storedCsrfToken, ok := session.Values["oauth_csrf_token_dropbox"].(string)
-	if !ok || storedCsrfToken == "" {
-		return nil, "", nil, ErrNoState
-	}
-
-	if receivedOauthState.CsrfToken != storedCsrfToken {
-		return nil, "", nil, ErrInvalidState
-	}
-
-	delete(session.Values, "pkce_verifier_dropbox")
-	delete(session.Values, "oauth_csrf_token_dropbox")
-	err = session.Save(r, w)
-	if err != nil {
-		config.LOGGER.Error("failed to cleanup session details", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-	}
-
-	tok, err := p.Config.Exchange(context.Background(), code, oauth2.VerifierOption(storedVerifier))
-	if err != nil {
-		config.LOGGER.Error("token exchange failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
-		return nil, "", nil, err
-	}
-
-	accountInfo, err := p.GetAccountInfo(r.Context(), tok)
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	return tok, receivedOauthState.UserID, accountInfo, nil
+func (p *DropboxProvider) GetToken(
+	w http.ResponseWriter,
+	r *http.Request,
+	store *sessions.CookieStore,
+) (*oauth2.Token, string, *UserAccountInfo, error) {
+	return exchangeToken(
+		r.Context(),
+		r,
+		w,
+		store,
+		DROPBOX_SESSION_NAME,
+		DROPBOX_VERIFIER_KEY,
+		DROPBOX_CSRF_KEY,
+		&p.Config,
+		DROPBOX_PROVIDER_NAME,
+		p.GetAccountInfo,
+	)
 }
 
-func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Token) (*UserAccountInfo, error) {
-
+func (p *DropboxProvider) GetAccountInfo(
+	ctx context.Context,
+	token *oauth2.Token,
+) (*UserAccountInfo, error) {
 	httpClient := http.Client{}
 
-	url := fmt.Sprintf("%s/2/users/get_current_account", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/2/users/get_current_account"
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		config.LOGGER.Error("failed to initiate new HTTP POST request", zap.Error(err))
+
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("dropbox /get_current_account request failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"dropbox /get_current_account request failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -254,16 +214,25 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read response body for /get_current_account", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read response body for /get_current_account",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	var response DropboxAccountInfo
 
 	err = json.Unmarshal(body, &response)
-
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal response body for /get_current_account", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal response body for /get_current_account",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -278,8 +247,12 @@ func (p *DropboxProvider) GetAccountInfo(ctx context.Context, token *oauth2.Toke
 	return &userInfo, nil
 }
 
-func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, authToken repository.GetAuthTokensRow) error {
-
+func (p *DropboxProvider) SyncFiles(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	accountID pgtype.UUID,
+	authToken repository.GetAuthTokensRow,
+) error {
 	cursor := ""
 
 	totalItemCount := 0
@@ -287,10 +260,14 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 	queries := repository.New(conn)
 
 	syncDetails, err := queries.GetLatestSyncTimeAndPagetoken(ctx, accountID)
-
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			config.LOGGER.Error("could not fetch timestamp and page token for latest sync", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+			config.LOGGER.Error(
+				"could not fetch timestamp and page token for latest sync",
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+				zap.String("account_id", accountID.String()),
+			)
+
 			return err
 		}
 	}
@@ -301,37 +278,78 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 
 	accessToken, err := utils.Decrypt(authToken.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		config.LOGGER.Error(
+			"could not decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+		)
+
 		return err
 	}
 
 	refreshToken, err := utils.Decrypt(authToken.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("could not decrypt refresh token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()))
+		config.LOGGER.Error(
+			"could not decrypt refresh token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+		)
+
 		return err
 	}
 
 	for {
-
-		dropboxResponse, err := p.getDropboxFolderList(ctx, accountID, conn, accessToken, refreshToken, cursor)
-
+		dropboxResponse, err := p.getDropboxFolderList(
+			ctx,
+			accountID,
+			conn,
+			accessToken,
+			refreshToken,
+			cursor,
+		)
 		if err != nil {
-			config.LOGGER.Error("request failed to fetch dropbox folder list", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error(
+				"request failed to fetch dropbox folder list",
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+				zap.Error(err),
+			)
+
 			return err
 		}
 
-		files, providerFileIDs := p.convertToSyncedItemSlice(dropboxResponse.Entries, accountID, syncDetails.LastSyncedAt.Valid)
+		files, providerFileIDs := p.convertToSyncedItemSlice(
+			dropboxResponse.Entries,
+			accountID,
+			syncDetails.LastSyncedAt.Valid,
+		)
 
 		var insertedRows int64
 
-		insertedRows, err = p.bulkInsertSyncedItems(ctx, conn, *queries, providerFileIDs, accountID, files, dropboxResponse.Cursor)
-
+		insertedRows, err = p.bulkInsertSyncedItems(
+			ctx,
+			conn,
+			*queries,
+			providerFileIDs,
+			accountID,
+			files,
+			dropboxResponse.Cursor,
+		)
 		if err != nil {
-			config.LOGGER.Error("failed to insert synced files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to insert synced files",
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+				zap.Error(err),
+			)
+
 			return err
 		}
 
-		config.LOGGER.Info("batch inserted", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Int64("item_count", insertedRows))
+		config.LOGGER.Info(
+			"batch inserted",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Int64("item_count", insertedRows),
+		)
 
 		totalItemCount += int(insertedRows)
 
@@ -347,53 +365,82 @@ func (p *DropboxProvider) SyncFiles(ctx context.Context, conn *pgxpool.Conn, acc
 	return nil
 }
 
-func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken, cursor string) (*DropboxListFolderResponse, error) {
-
-	url := fmt.Sprintf("%s/2/files/list_folder", DROPBOX_API_BASE_URL)
-	reqBody := []byte(`{"path": "", "recursive": true}`)
+func (p *DropboxProvider) getDropboxFolderList(
+	ctx context.Context,
+	accountID pgtype.UUID,
+	conn *pgxpool.Conn,
+	accessToken, refreshToken, cursor string,
+) (*DropboxListFolderResponse, error) {
+	url := DROPBOX_API_BASE_URL + "/2/files/list_folder"
+	reqBody := []byte(`{"path": "", "recursive": true, "include_deleted": true}`)
 
 	if cursor != "" {
-		url = fmt.Sprintf("%s/continue", url)
+		url = url + "/continue"
 		reqBody = fmt.Appendf(nil, "{\"cursor\": \"%s\"}", cursor)
 	}
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		config.LOGGER.Error("an error occured while generating http request for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"an error occurred while generating http request for dropbox sync task",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request for dropbox sync task failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"http request for dropbox sync task failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox sync task",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	if res.StatusCode == http.StatusUnauthorized {
-		config.LOGGER.Warn("access token expired, attempting to renew", zap.String("provider", DROPBOX_PROVIDER_NAME))
+		config.LOGGER.Warn(
+			"access token expired, attempting to renew",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+		)
 
 		_, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
 		if err != nil {
 			return nil, err
 		}
 
-		return nil, fmt.Errorf("request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request")
+		return nil, errors.New(
+			"request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request",
+		)
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request for dropbox sync task did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"http request for dropbox sync task did not return 200",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return nil, fmt.Errorf("%s", string(body[:]))
 	}
 
@@ -404,7 +451,12 @@ func (p *DropboxProvider) getDropboxFolderList(ctx context.Context, accountID pg
 	return &dropboxResponse, err
 }
 
-func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, refreshToken string) (string, int64, error) {
+func (p *DropboxProvider) RenewOAuthTokens(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	accountID pgtype.UUID,
+	refreshToken string,
+) (string, int64, error) {
 	data := url.Values{}
 
 	data.Add("grant_type", "refresh_token")
@@ -412,37 +464,75 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 	data.Add("client_id", p.Config.ClientID)
 	data.Add("client_secret", p.Config.ClientSecret)
 
-	url := fmt.Sprintf("%s/oauth2/token", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/oauth2/token"
 
-	res, err := http.Post(url, "application/x-www-form-urlencoded", bytes.NewBufferString(data.Encode()))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		url,
+		bytes.NewBufferString(data.Encode()),
+	)
 	if err != nil {
-		config.LOGGER.Error("http request for dropbox token renewal failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"failed to create http request for dropbox oauth request",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return "", 0, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	httpClient := http.Client{}
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		config.LOGGER.Error(
+			"http request for dropbox token renewal failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return "", 0, err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox token renewal", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox token renewal",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return "", 0, err
 	}
 
 	var dropboxResponse DropboxAuthResponse
 
 	err = json.Unmarshal(body, &dropboxResponse)
-
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal dropbox token renew response", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal dropbox token renew response",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return "", 0, err
 	}
 
 	expiresIn := time.Now().Add(time.Duration(dropboxResponse.ExpiresIn) * time.Second)
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		encryptedAccessToken, err := utils.Encrypt(dropboxResponse.AccessToken)
 		if err != nil {
-			config.LOGGER.Error("failed to encrypt new access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to encrypt new access token",
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+				zap.Error(err),
+			)
+
 			return err
 		}
 
@@ -457,16 +547,25 @@ func (p *DropboxProvider) RenewOAuthTokens(ctx context.Context, conn *pgxpool.Co
 
 		return err
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to update dropbox oauth tokens in db", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to update dropbox oauth tokens in db",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return "", 0, err
 	}
 
 	return dropboxResponse.AccessToken, int64(dropboxResponse.ExpiresIn), nil
 }
 
-func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, accountID *pgtype.UUID, encryptedAccessToken, encryptedRefreshToken string) (*StorageQuota, error) {
+func (p *DropboxProvider) GetStorageQuota(
+	ctx context.Context,
+	userID string,
+	accountID *pgtype.UUID,
+	encryptedAccessToken, encryptedRefreshToken string,
+) (*StorageQuota, error) {
 	storageQuotaKey := fmt.Sprintf("storage:dropbox:%s:%s", userID, accountID.String())
 
 	redisClient := db.GetRedisClient()
@@ -474,49 +573,69 @@ func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, ac
 	cachedStorageQuota := redisClient.Get(ctx, storageQuotaKey)
 
 	if cachedStorageQuota.Err() == nil {
-
 		val, err := cachedStorageQuota.Result()
 		if err != nil {
-			config.LOGGER.Error("failed to get the result from redis cache", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME))
+			config.LOGGER.Error(
+				"failed to get the result from redis cache",
+				zap.String("user_id", userID),
+				zap.String("account_id", accountID.String()),
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+			)
 		} else {
-
 			var storageQuota StorageQuota
+
 			err = json.Unmarshal([]byte(val), &storageQuota)
 			if err == nil {
 				return &storageQuota, nil
 			}
+
 			config.LOGGER.Error("failed to unmarshal storage quota", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME))
 		}
 	}
 
 	accessToken, err := utils.Decrypt(encryptedAccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/2/users/get_space_usage", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/2/users/get_space_usage"
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		config.LOGGER.Error("failed create new http request for dropbox space usage endpoint", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed create new http request for dropbox space usage endpoint",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	client := http.Client{}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		config.LOGGER.Error("http request for dropbox space usage endpoint failed", zap.Error(err))
+
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read response body for space usage request for dropbox", zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read response body for space usage request for dropbox",
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -524,7 +643,11 @@ func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, ac
 
 	err = json.Unmarshal(body, &dropboxResponse)
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal http response body for dropbox space usage endpoint", zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal http response body for dropbox space usage endpoint",
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -535,24 +658,46 @@ func (p *DropboxProvider) GetStorageQuota(ctx context.Context, userID string, ac
 
 	storageQuotaCache, err := json.Marshal(storageQuota)
 	if err != nil {
-		config.LOGGER.Error("failed to marshal storage quota for caching", zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal storage quota for caching",
+			zap.String("account_id", accountID.String()),
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	storageCache := redisClient.Set(ctx, storageQuotaKey, storageQuotaCache, 15*time.Minute)
 
 	if storageCache.Err() != nil {
-		config.LOGGER.Error("failed to cache storage quota", zap.String("account_id", accountID.String()), zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to cache storage quota",
+			zap.String("account_id", accountID.String()),
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
 	}
 
 	return &storageQuota, nil
 }
 
-func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, uploadedFiles []middlewares.UploadedFile) error {
-
+func (p *DropboxProvider) UploadFiles(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	uploadedFiles []middlewares.UploadedFile,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -565,17 +710,21 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 
 	for _, f := range uploadedFiles {
 		file := f
+
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
-			uploadedFile, err := p.uploadToDropbox(accessToken, file)
+			uploadedFile, err := p.uploadToDropbox(ctx, accessToken, file)
 			if err != nil {
 				return err
 			}
 
 			mu.Lock()
+
 			results = append(results, *uploadedFile)
+
 			mu.Unlock()
 
 			return nil
@@ -589,22 +738,35 @@ func (p *DropboxProvider) UploadFiles(ctx context.Context, accountID *pgtype.UUI
 	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
 
 	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
-
 	if err != nil {
-		config.LOGGER.Error("failed to insert newly uploaded files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to insert newly uploaded files",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", DROPBOX_PROVIDER_NAME, accountID.String())); err != nil {
-		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to delete cache for content search results",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return nil
 }
 
-func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.UploadedFile) (*DropboxListFolderEntries, error) {
+func (p *DropboxProvider) uploadToDropbox(
+	ctx context.Context,
+	accesstoken string,
+	file middlewares.UploadedFile,
+) (*DropboxListFolderEntries, error) {
 	dropboxArgs := map[string]any{
-		"path":            fmt.Sprintf("/%s", file.FileHeader.Filename),
+		"path":            "/" + file.FileHeader.Filename,
 		"mode":            "add",
 		"autorename":      false,
 		"mute":            false,
@@ -612,29 +774,43 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 	}
 
 	argJSON, err := json.Marshal(dropboxArgs)
-
 	if err != nil {
-		config.LOGGER.Error("failed to marshal dropbox args", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal dropbox args",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/2/files/upload", DROPBOX_CONTENT_API_BASE_URL)
+	url := DROPBOX_CONTENT_API_BASE_URL + "/2/files/upload"
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest("POST", url, file.File)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, file.File)
 	if err != nil {
-		config.LOGGER.Error("failed to create new request to upload files to dropbox", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to create new request to upload files to dropbox",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accesstoken))
-	req.Header.Set("Dropbox-API-Arg", string(argJSON))
+	req.Header.Set("Authorization", "Bearer "+accesstoken)
+	req.Header.Set("Dropbox-Api-Arg", string(argJSON))
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request to upload file to dropbox failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"http request to upload file to dropbox failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -642,31 +818,56 @@ func (p *DropboxProvider) uploadToDropbox(accesstoken string, file middlewares.U
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox file upload", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox file upload",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request to upload file to dropbox failed with non-200 status", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
-		return nil, fmt.Errorf("http request to upload file to dropbox failed with non-200 status")
+		config.LOGGER.Error(
+			"http request to upload file to dropbox failed with non-200 status",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
+		return nil, errors.New("http request to upload file to dropbox failed with non-200 status")
 	}
 
 	var response DropboxListFolderEntries
 
 	err = json.Unmarshal(body, &response)
-
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal json response for dropbox file upload response", zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal json response for dropbox file upload response",
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	return &response, nil
 }
 
-func (p *DropboxProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+func (p *DropboxProvider) MoveToTrash(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	syncedItemIds []repository.GetProviderFileIdsRow,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -680,14 +881,17 @@ func (p *DropboxProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUI
 	for _, f := range syncedItemIds {
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
-			if err := p.moveToTrash(accessToken, f.Path.String); err != nil {
+			if err := p.moveToTrash(ctx, accessToken, f.Path.String); err != nil {
 				return err
 			}
 
 			mu.Lock()
+
 			fileIDs = append(fileIDs, f.FileID)
+
 			mu.Unlock()
 
 			return nil
@@ -696,10 +900,11 @@ func (p *DropboxProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUI
 
 	if err := g.Wait(); err != nil {
 		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+
 		return err
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
@@ -707,19 +912,31 @@ func (p *DropboxProvider) MoveToTrash(ctx context.Context, accountID *pgtype.UUI
 			AccountID: *accountID,
 		})
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+
 		return err
 	}
 
 	return nil
 }
 
-func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID *pgtype.UUID, conn *pgxpool.Conn, queries *repository.Queries, authTokens repository.GetAuthTokensRow, syncedItemIds []repository.GetProviderFileIdsRow) error {
+func (p *DropboxProvider) PermanentlyDeleteFiles(
+	ctx context.Context,
+	accountID *pgtype.UUID,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+	authTokens repository.GetAuthTokensRow,
+	syncedItemIds []repository.GetProviderFileIdsRow,
+) error {
 	accessToken, err := utils.Decrypt(authTokens.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
@@ -733,14 +950,17 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID 
 	for _, f := range syncedItemIds {
 		g.Go(func() error {
 			sem <- struct{}{}
+
 			defer func() { <-sem }()
 
-			if err := p.permanentlyDeleteFile(accessToken, f.Path.String); err != nil {
+			if err := p.permanentlyDeleteFile(ctx, accessToken, f.Path.String); err != nil {
 				return err
 			}
 
 			mu.Lock()
+
 			fileIDs = append(fileIDs, f.FileID)
+
 			mu.Unlock()
 
 			return nil
@@ -749,10 +969,11 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID 
 
 	if err := g.Wait(); err != nil {
 		config.LOGGER.Error("failed to move files to trash", zap.Error(err))
+
 		return err
 	}
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
@@ -760,22 +981,36 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(ctx context.Context, accountID 
 			AccountID: *accountID,
 		})
 	})
-
 	if err != nil {
 		config.LOGGER.Error("failed to set is_trashed to true for file ids", zap.Error(err))
+
 		return err
 	}
 
 	if err := utils.DeleteKeysByPattern(ctx, fmt.Sprintf("search_cache:%s:%s*", DROPBOX_PROVIDER_NAME, accountID.String())); err != nil {
-		config.LOGGER.Error("failed to delete cache for content search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to delete cache for content search results",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return nil
 }
 
-func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string, account repository.GetUserAccountsRow, conn *pgxpool.Conn, queries *repository.Queries) ([]string, error) {
-
-	searchCacheKey := utils.BuildSearchCacheKey(string(account.Provider), account.ID.String(), searchText)
+func (p *DropboxProvider) SearchByContent(
+	ctx context.Context,
+	searchText string,
+	account repository.GetUserAccountsRow,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+) ([]string, error) {
+	searchCacheKey := utils.BuildSearchCacheKey(
+		string(account.Provider),
+		account.ID.String(),
+		searchText,
+	)
 
 	cachedFileIds, err := utils.GetCachedProviderFileIDs(ctx, searchCacheKey)
 	if err == nil {
@@ -784,13 +1019,23 @@ func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string
 
 	accessToken, err := utils.Decrypt(account.AccessToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
 	refreshToken, err := utils.Decrypt(account.RefreshToken)
 	if err != nil {
-		config.LOGGER.Error("failed to decrypt access token", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to decrypt access token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, err
 	}
 
@@ -799,9 +1044,22 @@ func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string
 	cursor := ""
 
 	for {
-		fileIds, newCursor, err := p.searchContentResults(ctx, conn, account.ID, searchText, accessToken, refreshToken, cursor)
+		fileIds, newCursor, err := p.searchContentResults(
+			ctx,
+			conn,
+			account.ID,
+			searchText,
+			accessToken,
+			refreshToken,
+			cursor,
+		)
 		if err != nil {
-			config.LOGGER.Error("dropbox request for content search failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+			config.LOGGER.Error(
+				"dropbox request for content search failed",
+				zap.String("provider", DROPBOX_PROVIDER_NAME),
+				zap.Error(err),
+			)
+
 			return nil, err
 		}
 
@@ -817,14 +1075,23 @@ func (p *DropboxProvider) SearchByContent(ctx context.Context, searchText string
 	expiryTime := config.CacheConfig.DEFAULT_DROPBOX_CACHE_EXPIRY
 
 	if err := utils.CacheProviderFileIDs(ctx, searchCacheKey, providerFileIDs, time.Duration(expiryTime)*time.Minute); err != nil {
-		config.LOGGER.Error("failed to cache search results", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", account.ID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to cache search results",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.String("account_id", account.ID.String()),
+			zap.Error(err),
+		)
 	}
 
 	return providerFileIDs, nil
 }
 
-func (p *DropboxProvider) searchContentResults(ctx context.Context, conn *pgxpool.Conn, accountID pgtype.UUID, searchText, accessToken, refreshToken, cursor string) ([]string, string, error) {
-
+func (p *DropboxProvider) searchContentResults(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	accountID pgtype.UUID,
+	searchText, accessToken, refreshToken, cursor string,
+) ([]string, string, error) {
 	reqBody := map[string]any{
 		"match_field_options": map[string]bool{
 			"include_highlights": false,
@@ -838,68 +1105,102 @@ func (p *DropboxProvider) searchContentResults(ctx context.Context, conn *pgxpoo
 		"query": searchText,
 	}
 
-	reqUrl := fmt.Sprintf("%s/2/files/search_v2", DROPBOX_API_BASE_URL)
+	reqUrl := DROPBOX_API_BASE_URL + "/2/files/search_v2"
 
 	if cursor != "" {
 		reqBody = map[string]any{
 			"cursor": cursor,
 		}
 
-		reqUrl = fmt.Sprintf("%s/2/files/search/continue_v2", DROPBOX_API_BASE_URL)
+		reqUrl = DROPBOX_API_BASE_URL + "/2/files/search/continue_v2"
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		config.LOGGER.Error("failed to marshal request body", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to marshal request body",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, "", err
 	}
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, reqUrl, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqUrl, bytes.NewReader(jsonBody))
 	if err != nil {
-		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to initialize new http post request for delete action",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, "", err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request for dropbox permanent delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"http request for dropbox permanent delete action failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, "", err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox search request", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox search request",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, "", err
 	}
 
 	if res.StatusCode == http.StatusUnauthorized {
-		config.LOGGER.Warn("access token expired, attempting to renew", zap.String("provider", DROPBOX_PROVIDER_NAME))
+		config.LOGGER.Warn(
+			"access token expired, attempting to renew",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+		)
 
 		_, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
 		if err != nil {
 			return nil, "", err
 		}
 
-		return nil, "", fmt.Errorf("request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request")
+		return nil, "", errors.New(
+			"request has failed with status 401, failing task for it to fetch new token from db instead of using the stale token in next request",
+		)
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request for dropbox sync task did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"http request for dropbox sync task did not return 200",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return nil, "", fmt.Errorf("%s", string(body[:]))
 	}
 
 	var dropboxResponse DropboxSearchResponse
 
 	err = json.Unmarshal(body, &dropboxResponse)
-
 	if err != nil {
-		config.LOGGER.Error("failed to unmarshal request body for http dropbox search request", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to unmarshal request body for http dropbox search request",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return nil, "", err
 	}
 
@@ -912,41 +1213,61 @@ func (p *DropboxProvider) searchContentResults(ctx context.Context, conn *pgxpoo
 	return providerFileIds, dropboxResponse.Cursor, nil
 }
 
-func (p *DropboxProvider) moveToTrash(accessToken, filePath string) error {
+func (p *DropboxProvider) moveToTrash(ctx context.Context, accessToken, filePath string) error {
 	reqBody := fmt.Appendf(nil, "{\"path\": \"%s\"}", filePath)
 
 	httpClient := http.Client{}
 
-	url := fmt.Sprintf("%s/2/files/delete_v2", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/2/files/delete_v2"
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to initialize new http post request for delete action",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request for dropbox delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"http request for dropbox delete action failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox sync task",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	if res.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("request has failed with status 401")
+		return errors.New("request has failed with status 401")
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request for dropbox delete action did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"http request for dropbox delete action did not return 200",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return fmt.Errorf("%s", string(body[:]))
 	}
 
@@ -957,52 +1278,82 @@ func (p *DropboxProvider) moveToTrash(accessToken, filePath string) error {
 	return err
 }
 
-func (p *DropboxProvider) permanentlyDeleteFile(accessToken, filePath string) error {
+func (p *DropboxProvider) permanentlyDeleteFile(
+	ctx context.Context,
+	accessToken, filePath string,
+) error {
 	reqBody := fmt.Appendf(nil, "{\"path\": \"%s\"}", filePath)
 
 	httpClient := http.Client{}
 
-	url := fmt.Sprintf("%s/2/files/permanently_delete", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/2/files/permanently_delete"
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		config.LOGGER.Error("failed to initialize new http post request for delete action", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to initialize new http post request for delete action",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
-		config.LOGGER.Error("http request for dropbox permanent delete action failed", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"http request for dropbox permanent delete action failed",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 	defer res.Body.Close()
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		config.LOGGER.Error("failed to read http response body for dropbox sync task", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox sync task",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return err
 	}
 
 	if res.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("request has failed with status 401")
+		return errors.New("request has failed with status 401")
 	}
 
 	if res.StatusCode != http.StatusOK {
-		config.LOGGER.Error("http request for dropbox permanent delete action did not return 200", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Int("status_code", res.StatusCode))
+		config.LOGGER.Error(
+			"http request for dropbox permanent delete action did not return 200",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Int("status_code", res.StatusCode),
+		)
+
 		return fmt.Errorf("%s", string(body[:]))
 	}
 
 	return nil
 }
 
-func (p *DropboxProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpool.Conn, queries repository.Queries, providerFileIDs []string, accountID pgtype.UUID, files []repository.AddSyncedItemsParams, cursor string) (int64, error) {
-
+func (p *DropboxProvider) bulkInsertSyncedItems(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	queries repository.Queries,
+	providerFileIDs []string,
+	accountID pgtype.UUID,
+	files []repository.AddSyncedItemsParams,
+	cursor string,
+) (int64, error) {
 	var insertedRowCount int64
 
-	err := utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
+	err := utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		if len(providerFileIDs) > 0 {
@@ -1010,15 +1361,19 @@ func (p *DropboxProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpo
 				ProviderFileIds: providerFileIDs,
 				AccountID:       accountID,
 			})
-
 			if err != nil {
-				config.LOGGER.Error("an error occured while deleting conflicted files", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+				config.LOGGER.Error(
+					"an error occurred while deleting conflicted files",
+					zap.String("provider", DROPBOX_PROVIDER_NAME),
+					zap.String("account_id", accountID.String()),
+					zap.Error(err),
+				)
+
 				return err
 			}
 		}
 
 		insertedRows, err := qx.AddSyncedItems(ctx, files)
-
 		if err != nil {
 			return err
 		}
@@ -1030,27 +1385,37 @@ func (p *DropboxProvider) bulkInsertSyncedItems(ctx context.Context, conn *pgxpo
 			SyncPageToken: db.PGTextField(cursor),
 		})
 	})
-
 	if err != nil {
-		config.LOGGER.Error("failed to bulk insert synced items", zap.String("provider", DROPBOX_PROVIDER_NAME), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to bulk insert synced items",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
 		return 0, err
 	}
 
 	return insertedRowCount, nil
 }
 
-func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEntries, accountID pgtype.UUID, isValidLastSyncedData bool) ([]repository.AddSyncedItemsParams, []string) {
-
+func (p *DropboxProvider) convertToSyncedItemSlice(
+	entries []DropboxListFolderEntries,
+	accountID pgtype.UUID,
+	isValidLastSyncedData bool,
+) ([]repository.AddSyncedItemsParams, []string) {
 	syncedItems := []repository.AddSyncedItemsParams{}
 	providerFileIDs := []string{}
 
 	for _, entry := range entries {
-
 		ext := filepath.Ext(entry.Name)
 
 		mimeType := mime.TypeByExtension(ext)
 
 		parentFolder := path.Dir(entry.PathDisplay)
+
+		if entry.Name == "bgnet_usl_c_1.pdf" {
+			config.LOGGER.Info("is_deleted", zap.String("value", entry.Tag))
+		}
 
 		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
 			AccountID:      accountID,
@@ -1063,6 +1428,7 @@ func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEn
 			ParentFolder:   db.PGTextField(parentFolder),
 			IsFolder:       entry.Tag == "folder",
 			ContentHash:    db.PGTextField(entry.ContentHash),
+			IsTrashed:      db.PGBool(entry.Tag == "deleted"),
 			CreatedTime:    db.PGTimestamptzField(time.Time{}),
 			ModifiedTime:   db.PGTimestamptzField(entry.ClientModified),
 			ThumbnailLink:  db.PGTextField(""),
@@ -1080,8 +1446,14 @@ func (p *DropboxProvider) convertToSyncedItemSlice(entries []DropboxListFolderEn
 	return syncedItems, providerFileIDs
 }
 
-func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentFolder ParentFolder, account repository.GetLinkedAccountRow, conn *pgxpool.Conn, queries repository.Queries) error {
-
+func (p *DropboxProvider) CreateFolder(
+	ctx context.Context,
+	name string,
+	parentFolder ParentFolder,
+	account repository.GetLinkedAccountRow,
+	conn *pgxpool.Conn,
+	queries repository.Queries,
+) error {
 	logFields := []zap.Field{
 		zap.String("provider", DROPBOX_PROVIDER_NAME),
 	}
@@ -1090,31 +1462,40 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
+
 		return err
 	}
 
 	parentPath := parentFolder.Path
 
-	reqBody := fmt.Appendf(nil, "{\"autorename\":false,\"path\": \"%s\"}", fmt.Sprintf("%s/%s", parentPath, name))
+	reqBody := fmt.Appendf(
+		nil,
+		"{\"autorename\":false,\"path\": \"%s\"}",
+		fmt.Sprintf("%s/%s", parentPath, name),
+	)
 
-	url := fmt.Sprintf("%s/2/files/create_folder_v2", DROPBOX_API_BASE_URL)
+	url := DROPBOX_API_BASE_URL + "/2/files/create_folder_v2"
 
 	httpClient := http.Client{}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
-		config.LOGGER.Error("failed to create new request for creating new folder in dropbox", logFields...)
+		config.LOGGER.Error(
+			"failed to create new request for creating new folder in dropbox",
+			logFields...)
+
 		return err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := httpClient.Do(req)
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("http request for creating new folder in dropbox failed", logFields...)
+
 		return err
 	}
 	defer res.Body.Close()
@@ -1122,14 +1503,25 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
-		config.LOGGER.Error("failed to read http response body for dropbox folder creation request", logFields...)
+		config.LOGGER.Error(
+			"failed to read http response body for dropbox folder creation request",
+			logFields...)
+
 		return err
 	}
 
 	if res.StatusCode != http.StatusOK {
-		err = fmt.Errorf("http request for creating new folder in dropbox returned a non-ok status code in response")
-		logFields = append(logFields, zap.Error(err), zap.String("body", string(body)), zap.Int("status_code", res.StatusCode))
+		err = errors.New(
+			"http request for creating new folder in dropbox returned a non-ok status code in response",
+		)
+		logFields = append(
+			logFields,
+			zap.Error(err),
+			zap.String("body", string(body)),
+			zap.Int("status_code", res.StatusCode),
+		)
 		config.LOGGER.Error("http request for creatin new folder in dropbox failed", logFields...)
+
 		return err
 	}
 
@@ -1139,6 +1531,7 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("failed to unmarshal http response body", logFields...)
+
 		return err
 	}
 
@@ -1148,8 +1541,7 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 
 	parentFolderPath := path.Dir(newFolder.PathDisplay)
 
-	err = utils.WithTransaction(ctx, conn, func(tx pgx.Tx) error {
-
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
 		qx := queries.WithTx(tx)
 
 		_, err := qx.AddSyncedItems(ctx, []repository.AddSyncedItemsParams{
@@ -1158,7 +1550,7 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 				ProviderFileID: newFolder.ID,
 				Name:           newFolder.Name,
 				Extension:      ext,
-				Size:           int64(newFolder.Size),
+				Size:           newFolder.Size,
 				Path:           db.PGTextField(newFolder.PathDisplay),
 				MimeType:       db.PGTextField(mimeType),
 				ParentFolder:   db.PGTextField(parentFolderPath),
@@ -1175,12 +1567,11 @@ func (p *DropboxProvider) CreateFolder(ctx context.Context, name string, parentF
 		})
 
 		return err
-
 	})
-
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))
 		config.LOGGER.Error("failed to insert metadata for newly created folder", logFields...)
+
 		return err
 	}
 

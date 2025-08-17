@@ -14,7 +14,12 @@ func main() {
 
 	redisClient := db.GetRedisClient()
 
-	apiServer := api.NewAPIServer(config.APIConfig.HOST, config.APIConfig.PORT, connPool, redisClient)
+	apiServer := api.NewAPIServer(
+		config.APIConfig.HOST,
+		config.APIConfig.PORT,
+		connPool,
+		redisClient,
+	)
 
 	if err := apiServer.Run(); err != nil {
 		config.LOGGER.Fatal("Application terminated", zap.Error(err))

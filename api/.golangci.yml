@@ -1,0 +1,44 @@
+# See the dedicated "version" documentation section.
+version: "2"
+
+run:
+  timeout: 3m
+  concurrency: 2
+  issues-exit-code: 1
+  tests: false
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosec
+    - ineffassign
+    - goconst
+    - misspell
+    - unconvert
+    - wastedassign
+    - whitespace
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      disable-default-exclusions: true
+      exclude-functions:
+        - github.com/joho/godotenv.Load
+        - (io.ReadCloser).Close
+        - (*go.uber.org/zap.Logger).Sync
+    gosec:
+      excludes:
+        - G104
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
+
