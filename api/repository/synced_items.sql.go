@@ -99,6 +99,36 @@ func (q *Queries) DeleteSyncedItems(ctx context.Context, arg DeleteSyncedItemsPa
 	return err
 }
 
+const getAccountById = `-- name: GetAccountById :one
+SELECT id, access_token, refresh_token, provider
+FROM linked_account
+WHERE user_id = $1 AND id = $2
+`
+
+type GetAccountByIdParams struct {
+	UserID    string      `json:"user_id"`
+	AccountID pgtype.UUID `json:"account_id"`
+}
+
+type GetAccountByIdRow struct {
+	ID           pgtype.UUID  `json:"id"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	Provider     ProviderEnum `json:"provider"`
+}
+
+func (q *Queries) GetAccountById(ctx context.Context, arg GetAccountByIdParams) (GetAccountByIdRow, error) {
+	row := q.db.QueryRow(ctx, getAccountById, arg.UserID, arg.AccountID)
+	var i GetAccountByIdRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.Provider,
+	)
+	return i, err
+}
+
 const getProviderFileIds = `-- name: GetProviderFileIds :many
 SELECT synced_items.id AS file_id, synced_items.provider_file_id, synced_items.path, linked_account.provider, linked_account.id AS account_id
 FROM synced_items JOIN linked_account ON linked_account.id = synced_items.account_id
@@ -299,6 +329,63 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const getTrashItemsByIds = `-- name: GetTrashItemsByIds :many
+SELECT id, name, provider_file_id, account_id
+FROM synced_items
+WHERE id = ANY($1::UUID[])
+  AND is_trashed = true AND account_id IN (
+    SELECT id FROM linked_account WHERE user_id = $2
+  )
+`
+
+type GetTrashItemsByIdsParams struct {
+	ProviderFileIds []pgtype.UUID `json:"provider_file_ids"`
+	UserID          string        `json:"user_id"`
+}
+
+type GetTrashItemsByIdsRow struct {
+	ID             pgtype.UUID `json:"id"`
+	Name           string      `json:"name"`
+	ProviderFileID string      `json:"provider_file_id"`
+	AccountID      pgtype.UUID `json:"account_id"`
+}
+
+func (q *Queries) GetTrashItemsByIds(ctx context.Context, arg GetTrashItemsByIdsParams) ([]GetTrashItemsByIdsRow, error) {
+	rows, err := q.db.Query(ctx, getTrashItemsByIds, arg.ProviderFileIds, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetTrashItemsByIdsRow{}
+	for rows.Next() {
+		var i GetTrashItemsByIdsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ProviderFileID,
+			&i.AccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const restoreFromTrash = `-- name: RestoreFromTrash :exec
+UPDATE synced_items
+SET is_trashed = false
+WHERE id = ANY($1::UUID[])
+`
+
+func (q *Queries) RestoreFromTrash(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, restoreFromTrash, ids)
+	return err
 }
 
 const setFileTrashed = `-- name: SetFileTrashed :exec

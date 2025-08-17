@@ -1577,3 +1577,13 @@ func (p *DropboxProvider) CreateFolder(
 
 	return nil
 }
+
+func (p *DropboxProvider) RestoreFiles(
+	ctx context.Context,
+	account *repository.GetAccountByIdRow,
+	files []repository.GetTrashItemsByIdsRow,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+) error {
+	return nil
+}

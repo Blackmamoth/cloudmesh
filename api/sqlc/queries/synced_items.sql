@@ -93,3 +93,21 @@ DELETE FROM synced_items WHERE id = ANY(@file_ids::UUID[]) AND account_id = @acc
 
 -- name: GetSyncedItemByID :one
 SELECT name, provider_file_id, is_folder, path FROM synced_items WHERE account_id = @account_id AND id = @id;
+
+-- name: GetTrashItemsByIds :many
+SELECT id, name, provider_file_id, account_id
+FROM synced_items
+WHERE id = ANY(@provider_file_ids::UUID[])
+  AND is_trashed = true AND account_id IN (
+    SELECT id FROM linked_account WHERE user_id = @user_id
+  );
+
+-- name: GetAccountById :one
+SELECT id, access_token, refresh_token, provider
+FROM linked_account
+WHERE user_id = @user_id AND id = @account_id;
+
+-- name: RestoreFromTrash :exec
+UPDATE synced_items
+SET is_trashed = false
+WHERE id = ANY(@ids::UUID[]);

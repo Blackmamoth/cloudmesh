@@ -1216,3 +1216,98 @@ func (p *GoogleProvider) CreateFolder(
 
 	return nil
 }
+
+func (p *GoogleProvider) RestoreFiles(
+	ctx context.Context,
+	account *repository.GetAccountByIdRow,
+	files []repository.GetTrashItemsByIdsRow,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+) error {
+	logFields := []zap.Field{
+		zap.String("provider", GOOGLE_PROVIDER_NAME),
+	}
+
+	accessToken, err := utils.Decrypt(account.AccessToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+
+		return err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt access token", logFields...)
+
+		return err
+	}
+
+	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
+
+	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		config.LOGGER.Error(
+			"an error occurred while initializing google drive service",
+			logFields...)
+
+		return err
+	}
+
+	var (
+		mu      sync.Mutex
+		results []pgtype.UUID
+		g, _    = errgroup.WithContext(ctx)
+		sem     = make(chan struct{}, 10)
+	)
+
+	for _, f := range files {
+		file := f
+
+		g.Go(func() error {
+			sem <- struct{}{}
+
+			defer func() { <-sem }()
+
+			err := p.restoreFile(driveService, file.ProviderFileID)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			results = append(results, file.ID)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	err = utils.WithTransaction(ctx, conn, func(ctx context.Context, tx pgx.Tx) error {
+		qtx := queries.WithTx(tx)
+
+		return qtx.RestoreFromTrash(ctx, results)
+	})
+	if err != nil {
+		config.LOGGER.Error(
+			"db query to set is_trashed = false failed",
+			zap.String("account_id", account.ID.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	return nil
+}
+
+func (p *GoogleProvider) restoreFile(service *drive.Service, fileID string) error {
+	fileMetadata := &drive.File{
+		Trashed: false,
+	}
+
+	_, err := service.Files.Update(fileID, fileMetadata).Fields("id,name,trashed").Do()
+
+	return err
+}

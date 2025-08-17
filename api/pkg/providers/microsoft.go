@@ -1433,3 +1433,13 @@ func (p *MicrosoftProvider) CreateFolder(
 
 	return nil
 }
+
+func (p *MicrosoftProvider) RestoreFiles(
+	ctx context.Context,
+	account *repository.GetAccountByIdRow,
+	files []repository.GetTrashItemsByIdsRow,
+	conn *pgxpool.Conn,
+	queries *repository.Queries,
+) error {
+	return nil
+}

@@ -91,6 +91,13 @@ type Provider interface {
 		authTokens repository.GetAuthTokensRow,
 		syncedItemIds []repository.GetProviderFileIdsRow,
 	) error
+	RestoreFiles(
+		ctx context.Context,
+		account *repository.GetAccountByIdRow,
+		files []repository.GetTrashItemsByIdsRow,
+		conn *pgxpool.Conn,
+		queries *repository.Queries,
+	) error
 	SearchByContent(
 		ctx context.Context,
 		searchText string,

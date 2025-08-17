@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
@@ -52,6 +53,10 @@ type MoveToTrashValidation struct {
 }
 
 type PermanentDeleteValidation struct {
+	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
+}
+
+type RestoreFilesValidatation struct {
 	FileIDs []string `validate:"required,min=1,dive,uuid4" json:"file_ids"`
 }
 
@@ -109,9 +114,11 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 
 	r.Post("/create-folder", h.createFolder)
 
-	r.Put("/move-to-trash", h.moveFilesToTrash)
+	r.Patch("/move-to-trash", h.moveFilesToTrash)
 
 	r.Delete("/permanent-delete-files", h.permanentlyDelete)
+
+	r.Patch("/restore-from-trash", h.restoreFiles)
 
 	return r
 }
@@ -356,6 +363,7 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
@@ -590,6 +598,7 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
@@ -609,7 +618,10 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	grouped := h.groupFilesByAccountID(fileDetails)
+	grouped := groupFilesByAccountID(
+		fileDetails,
+		func(f repository.GetProviderFileIdsRow) pgtype.UUID { return f.AccountID },
+	)
 
 	for accountID, items := range grouped {
 		authTokens, err := queries.GetAuthTokens(r.Context(), repository.GetAuthTokensParams{
@@ -701,6 +713,7 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
@@ -720,7 +733,10 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	grouped := h.groupFilesByAccountID(fileDetails)
+	grouped := groupFilesByAccountID(
+		fileDetails,
+		func(f repository.GetProviderFileIdsRow) pgtype.UUID { return f.AccountID },
+	)
 
 	for accountID, items := range grouped {
 		authTokens, err := queries.GetAuthTokens(r.Context(), repository.GetAuthTokensParams{
@@ -771,14 +787,123 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (h *FilesHandler) groupFilesByAccountID(
-	files []repository.GetProviderFileIdsRow,
-) map[pgtype.UUID][]repository.GetProviderFileIdsRow {
-	grouped := make(map[pgtype.UUID][]repository.GetProviderFileIdsRow)
-
-	for _, file := range files {
-		grouped[file.AccountID] = append(grouped[file.AccountID], file)
+func (h *FilesHandler) restoreFiles(w http.ResponseWriter, r *http.Request) {
+	payload, ok := utils.ParseAndValidate[RestoreFilesValidatation](w, r, false)
+	if !ok {
+		return
 	}
 
+	userID, ok := r.Context().Value(middlewares.UserKey).(string)
+	if !ok {
+		config.LOGGER.Error("invalid userid", zap.Any("user_id_received", userID))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusBadRequest,
+			errors.New("could not validate user credentials"),
+		)
+
+		return
+	}
+
+	fileIds := []pgtype.UUID{}
+
+	for _, fileID := range payload.FileIDs {
+		fileUUID, err := db.PGUUID(fileID)
+		if err != nil {
+			config.LOGGER.Error("failed to parse string into UUID", zap.Error(err))
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusUnprocessableEntity,
+				errors.New("we could not process your request, please try again"),
+			)
+
+			return
+		}
+
+		fileIds = append(fileIds, *fileUUID)
+	}
+
+	conn, err := h.connPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusUnprocessableEntity,
+			errors.New("your request could not be processed, please try again later"),
+		)
+
+		return
+	}
+	defer conn.Release()
+
+	queries := repository.New(conn)
+
+	fileDetails, err := queries.GetTrashItemsByIds(r.Context(), repository.GetTrashItemsByIdsParams{
+		UserID:          userID,
+		ProviderFileIds: fileIds,
+	})
+	if err != nil {
+		config.LOGGER.Error("could fetch trashed files from db", zap.Error(err))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			fmt.Errorf("we could not fetch file details, please try again later"),
+		)
+		return
+	}
+
+	files := groupFilesByAccountID(
+		fileDetails,
+		func(f repository.GetTrashItemsByIdsRow) pgtype.UUID { return f.AccountID },
+	)
+
+	for accountID, files := range files {
+		account, err := queries.GetAccountById(r.Context(), repository.GetAccountByIdParams{
+			UserID:    userID,
+			AccountID: accountID,
+		})
+		if err != nil {
+			config.LOGGER.Error(
+				"failed to fetch account details",
+				zap.String("account_id", accountID.String()),
+				zap.Error(err),
+			)
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusInternalServerError,
+				fmt.Errorf("your file could not be restored, please try again later"),
+			)
+			return
+		}
+
+		provider := providers.OAuthProviders[string(account.Provider)]
+
+		if err := provider.RestoreFiles(r.Context(), &account, files, conn, queries); err != nil {
+			config.LOGGER.Error(
+				"failed to restore file from trash",
+				zap.String("account_id", account.ID.String()),
+				zap.Error(err),
+			)
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusInternalServerError,
+				fmt.Errorf("your file could not be restored, please try again later"),
+			)
+			return
+		}
+	}
+
+	utils.SendAPIResponse(w, http.StatusOK, "file(s) successfully restored from trash")
+}
+
+func groupFilesByAccountID[T any](
+	items []T,
+	keyFn func(T) pgtype.UUID,
+) map[pgtype.UUID][]T {
+	grouped := make(map[pgtype.UUID][]T)
+	for _, item := range items {
+		key := keyFn(item)
+		grouped[key] = append(grouped[key], item)
+	}
 	return grouped
 }
