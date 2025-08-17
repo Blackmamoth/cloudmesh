@@ -172,7 +172,7 @@ func (p *GoogleProvider) SyncFiles(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -220,7 +220,7 @@ func (p *GoogleProvider) SyncFiles(
 			gErr := &googleapi.Error{}
 			if !errors.As(err, &gErr) || gErr.Code != http.StatusUnauthorized {
 				config.LOGGER.Error(
-					"an error occured while synching google drive files",
+					"an error occurred while synching google drive files",
 					zap.String("provider", GOOGLE_PROVIDER_NAME),
 					zap.Error(err),
 				)
@@ -238,7 +238,7 @@ func (p *GoogleProvider) SyncFiles(
 			driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
 			if err != nil {
 				config.LOGGER.Error(
-					"an error occured while initializing google drive service",
+					"an error occurred while initializing google drive service",
 					zap.String("provider", GOOGLE_PROVIDER_NAME),
 					zap.Error(err),
 				)
@@ -472,7 +472,7 @@ func (p *GoogleProvider) GetStorageQuota(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -558,7 +558,7 @@ func (p *GoogleProvider) UploadFiles(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -660,7 +660,7 @@ func (p *GoogleProvider) MoveToTrash(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -753,7 +753,7 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -865,7 +865,7 @@ func (p *GoogleProvider) SearchByContent(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			zap.String("provider", GOOGLE_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -920,7 +920,7 @@ func (p *GoogleProvider) SearchByContent(
 			driveService, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
 			if err != nil {
 				config.LOGGER.Error(
-					"an error occured while initializing google drive service",
+					"an error occurred while initializing google drive service",
 					zap.String("provider", GOOGLE_PROVIDER_NAME),
 					zap.Error(err),
 				)
@@ -1076,7 +1076,7 @@ func (p *GoogleProvider) bulkInsertSyncedItems(
 			})
 			if err != nil {
 				config.LOGGER.Error(
-					"an error occured while deleting conflicted files",
+					"an error occurred while deleting conflicted files",
 					zap.String("provider", GOOGLE_PROVIDER_NAME),
 					zap.String("account_id", accountID.String()),
 					zap.Error(err),
@@ -1142,7 +1142,7 @@ func (p *GoogleProvider) CreateFolder(
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while initializing google drive service",
+			"an error occurred while initializing google drive service",
 			logFields...)
 
 		return err

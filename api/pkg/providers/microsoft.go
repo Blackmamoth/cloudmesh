@@ -596,7 +596,7 @@ func (p *MicrosoftProvider) bulkInsertSyncedItems(
 			if err != nil {
 				logFields = append(logFields, zap.Error(err))
 				config.LOGGER.Error(
-					"an error occured while deleting conflicted files",
+					"an error occurred while deleting conflicted files",
 					logFields...)
 
 				return err

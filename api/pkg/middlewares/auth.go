@@ -27,7 +27,7 @@ var UserKey userKey = userKey{}
 var (
 	ErrNoToken      = errors.New("unauthorized, no token")
 	ErrUnauthorized = errors.New("unauthorized")
-	ErrUnexpected   = errors.New("an unexpected error occured, please try again later")
+	ErrUnexpected   = errors.New("an unexpected error occurred, please try again later")
 )
 
 func NewAuthMiddleware(connPool *pgxpool.Pool, redisClient *redis.Client) *AuthMiddleware {

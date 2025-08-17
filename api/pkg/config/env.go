@@ -97,34 +97,34 @@ func loadEnv() {
 	godotenv.Load()
 
 	if err := envconfig.Process("", &APIConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("AES_", &AESConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("POSTGRES_", &PostgresConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("REDIS_", &RedisConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("", &CacheConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("ASYNQ_", &AsynqConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("", &OAuthConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 
 	if err := envconfig.Process("COOKIE_", &CookieStoreConfig); err != nil {
-		log.Fatalf("An error occured while loading environment variables: %v", err)
+		log.Fatalf("An error occurred while loading environment variables: %v", err)
 	}
 }

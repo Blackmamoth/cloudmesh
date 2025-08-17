@@ -384,7 +384,7 @@ func (p *DropboxProvider) getDropboxFolderList(
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		config.LOGGER.Error(
-			"an error occured while generating http request for dropbox sync task",
+			"an error occurred while generating http request for dropbox sync task",
 			zap.String("provider", DROPBOX_PROVIDER_NAME),
 			zap.Error(err),
 		)
@@ -1363,7 +1363,7 @@ func (p *DropboxProvider) bulkInsertSyncedItems(
 			})
 			if err != nil {
 				config.LOGGER.Error(
-					"an error occured while deleting conflicted files",
+					"an error occurred while deleting conflicted files",
 					zap.String("provider", DROPBOX_PROVIDER_NAME),
 					zap.String("account_id", accountID.String()),
 					zap.Error(err),
