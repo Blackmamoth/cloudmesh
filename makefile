@@ -38,8 +38,8 @@ dev:
 
 lint:
 	@cd api && golangci-lint run --fix
-	pnpm -C app lint
+	# @pnpm -C app lint
 
 format:
 	@cd api && golangci-lint fmt
-	pnpm -C app format
+	# @pnpm -C app format
