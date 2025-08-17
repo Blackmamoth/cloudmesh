@@ -1,8 +1,5 @@
 # See the dedicated "version" documentation section.
 version: "2"
-run:
-  dirs:
-    - ./api
 linters:
   enable:
     - errcheck
