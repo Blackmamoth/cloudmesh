@@ -356,6 +356,7 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
@@ -590,6 +591,7 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
@@ -701,6 +703,7 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 
 		return
 	}
+	defer conn.Release()
 
 	queries := repository.New(conn)
 
