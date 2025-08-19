@@ -10,6 +10,7 @@
 		"*": [
 			"make format",
 			"make lint",
+			"git add ."
 		]
-  	}
+	}
 }

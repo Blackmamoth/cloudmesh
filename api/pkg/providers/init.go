@@ -319,9 +319,7 @@ func EnsureValidAccesstoken(
 	return ensureValidAccessToken(ctx, accountID, conn, accessToken, refreshToken, p)
 }
 
-func ensureValidAccessToken(
-	ctx context.Context,
-	accountID pgtype.UUID,
+func ensureValidAccessToken(ctx context.Context, accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	accessToken, refreshToken string,
 	p Provider,
