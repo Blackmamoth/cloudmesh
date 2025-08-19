@@ -70,7 +70,7 @@ type Provider interface {
 	) (string, int64, error)
 	UploadFiles(
 		ctx context.Context,
-		accountID *pgtype.UUID,
+		accountID pgtype.UUID,
 		conn *pgxpool.Conn,
 		queries *repository.Queries,
 		authTokens repository.GetAuthTokensRow,
@@ -78,7 +78,7 @@ type Provider interface {
 	) error
 	MoveToTrash(
 		ctx context.Context,
-		accountID *pgtype.UUID,
+		accountID pgtype.UUID,
 		conn *pgxpool.Conn,
 		queries *repository.Queries,
 		authTokens repository.GetAuthTokensRow,
@@ -86,7 +86,7 @@ type Provider interface {
 	) error
 	PermanentlyDeleteFiles(
 		ctx context.Context,
-		accountID *pgtype.UUID,
+		accountID pgtype.UUID,
 		conn *pgxpool.Conn,
 		queries *repository.Queries,
 		authTokens repository.GetAuthTokensRow,
@@ -102,7 +102,7 @@ type Provider interface {
 	GetStorageQuota(
 		ctx context.Context,
 		userID string,
-		accountID *pgtype.UUID,
+		accountID pgtype.UUID,
 		encryptedAccessToken, encryptedRefreshToken string,
 	) (*StorageQuota, error)
 	CreateFolder(
@@ -111,7 +111,7 @@ type Provider interface {
 		parentFolder ParentFolder,
 		account repository.GetLinkedAccountRow,
 		conn *pgxpool.Conn,
-		queries repository.Queries,
+		queries *repository.Queries,
 	) error
 }
 

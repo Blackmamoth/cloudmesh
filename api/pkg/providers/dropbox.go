@@ -335,7 +335,7 @@ func (p *DropboxProvider) SyncFiles(
 		insertedRows, err = p.bulkInsertSyncedItems(
 			ctx,
 			conn,
-			*queries,
+			queries,
 			providerFileIDs,
 			accountID,
 			files,
@@ -570,7 +570,7 @@ func (p *DropboxProvider) RenewOAuthTokens(
 func (p *DropboxProvider) GetStorageQuota(
 	ctx context.Context,
 	userID string,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	encryptedAccessToken, encryptedRefreshToken string,
 ) (*StorageQuota, error) {
 	storageQuotaKey := fmt.Sprintf("storage:dropbox:%s:%s", userID, accountID.String())
@@ -624,7 +624,7 @@ func (p *DropboxProvider) GetStorageQuota(
 
 	_, pool := db.GetPGClient()
 
-	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
 	if err != nil {
 		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
@@ -709,7 +709,7 @@ func (p *DropboxProvider) GetStorageQuota(
 
 func (p *DropboxProvider) UploadFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -739,7 +739,7 @@ func (p *DropboxProvider) UploadFiles(
 
 	_, pool := db.GetPGClient()
 
-	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
 	if err != nil {
 		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
@@ -778,9 +778,9 @@ func (p *DropboxProvider) UploadFiles(
 		return err
 	}
 
-	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
+	files, _ := p.convertToSyncedItemSlice(results, accountID, false)
 
-	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
+	_, err = p.bulkInsertSyncedItems(ctx, conn, queries, []string{}, accountID, files, "")
 	if err != nil {
 		config.LOGGER.Error(
 			"failed to insert newly uploaded files",
@@ -897,7 +897,7 @@ func (p *DropboxProvider) uploadToDropbox(
 
 func (p *DropboxProvider) MoveToTrash(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -927,7 +927,7 @@ func (p *DropboxProvider) MoveToTrash(
 
 	_, pool := db.GetPGClient()
 
-	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
 	if err != nil {
 		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
@@ -970,7 +970,7 @@ func (p *DropboxProvider) MoveToTrash(
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -984,7 +984,7 @@ func (p *DropboxProvider) MoveToTrash(
 
 func (p *DropboxProvider) PermanentlyDeleteFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -1014,7 +1014,7 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(
 
 	_, pool := db.GetPGClient()
 
-	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
 	if err != nil {
 		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
@@ -1057,7 +1057,7 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(
 
 		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -1431,7 +1431,7 @@ func (p *DropboxProvider) permanentlyDeleteFile(
 func (p *DropboxProvider) bulkInsertSyncedItems(
 	ctx context.Context,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 	providerFileIDs []string,
 	accountID pgtype.UUID,
 	files []repository.AddSyncedItemsParams,
@@ -1538,7 +1538,7 @@ func (p *DropboxProvider) CreateFolder(
 	parentFolder ParentFolder,
 	account repository.GetLinkedAccountRow,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 ) error {
 	logFields := []zap.Field{
 		zap.String("provider", DROPBOX_PROVIDER_NAME),

@@ -109,7 +109,7 @@ func (h *FilesHandler) RegisterRoutes() *chi.Mux {
 
 	r.Post("/create-folder", h.createFolder)
 
-	r.Put("/move-to-trash", h.moveFilesToTrash)
+	r.Patch("/move-to-trash", h.moveFilesToTrash)
 
 	r.Delete("/permanent-delete-files", h.permanentlyDelete)
 
@@ -391,7 +391,7 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err = provider.UploadFiles(r.Context(), accountID, conn, queries, authTokens, uploadedFiles)
+	err = provider.UploadFiles(r.Context(), *accountID, conn, queries, authTokens, uploadedFiles)
 	if err != nil {
 		config.LOGGER.Error(
 			"failed to upload files",
@@ -408,7 +408,11 @@ func (h *FilesHandler) uploadFilesToProvider(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	utils.SendAPIResponse(w, http.StatusOK, "files uploaded successfully")
+	utils.SendAPIResponse(
+		w,
+		http.StatusOK,
+		map[string]string{"message": "Successfully upload your file(s)!"},
+	)
 }
 
 func (h *FilesHandler) createFolder(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +528,7 @@ func (h *FilesHandler) createFolder(w http.ResponseWriter, r *http.Request) {
 
 	provider := providers.OAuthProviders[string(account.Provider)]
 
-	err = provider.CreateFolder(r.Context(), payload.Name, parentFolder, account, conn, *queries)
+	err = provider.CreateFolder(r.Context(), payload.Name, parentFolder, account, conn, queries)
 	if err != nil {
 		config.LOGGER.Error("failed to create new folder", zap.Error(err))
 		utils.SendAPIErrorResponse(
@@ -539,7 +543,7 @@ func (h *FilesHandler) createFolder(w http.ResponseWriter, r *http.Request) {
 	utils.SendAPIResponse(
 		w,
 		http.StatusOK,
-		map[string]string{"message": "Your folder was successfully created"},
+		map[string]string{"message": "Your folder was successfully created!"},
 	)
 }
 
@@ -633,7 +637,7 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 
 		provider := providers.OAuthProviders[string(providerName)]
 
-		err = provider.MoveToTrash(r.Context(), &accountID, conn, queries, authTokens, items)
+		err = provider.MoveToTrash(r.Context(), accountID, conn, queries, authTokens, items)
 		if err != nil {
 			config.LOGGER.Error(
 				"failed to move file ids for move to trash action",
@@ -651,7 +655,7 @@ func (h *FilesHandler) moveFilesToTrash(w http.ResponseWriter, r *http.Request) 
 	}
 
 	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
-		"message": "Files successfully moved to trash",
+		"message": "Files successfully moved to trash.",
 	})
 }
 
@@ -747,7 +751,7 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 
 		err = provider.PermanentlyDeleteFiles(
 			r.Context(),
-			&accountID,
+			accountID,
 			conn,
 			queries,
 			authTokens,
@@ -770,7 +774,7 @@ func (h *FilesHandler) permanentlyDelete(w http.ResponseWriter, r *http.Request)
 	}
 
 	utils.SendAPIResponse(w, http.StatusOK, map[string]any{
-		"message": "Files successfully deleted",
+		"message": "File(s) successfully deleted.",
 	})
 }
 
