@@ -53,30 +53,30 @@ func HandleAuthTokenRenewalTask(ctx context.Context, t *asynq.Task) error {
 
 	queries := repository.New(conn)
 
-	jobID := t.ResultWriter().TaskID()
+	taskID := t.ResultWriter().TaskID()
 
 	retryCount, ok := asynq.GetRetryCount(ctx)
 
 	if !ok || retryCount == 0 {
-		err = queries.UpdateJobLogStart(ctx, repository.UpdateJobLogStartParams{
+		err = queries.UpdateTaskLogStart(ctx, repository.UpdateTaskLogStartParams{
 			StartedAt: db.PGTimestamptzField(time.Now()),
-			JobID:     jobID,
+			TaskID:    taskID,
 		})
 		if err != nil {
 			config.LOGGER.Error(
-				"failed to insert start log for job",
-				zap.String("job_id", jobID),
+				"failed to insert start log for task",
+				zap.String("task_id", taskID),
 				zap.Error(err),
 			)
 		}
 	} else {
-		err = queries.UpdateJobLogRetryCount(ctx, repository.UpdateJobLogRetryCountParams{
+		err = queries.UpdateTaskLogRetryCount(ctx, repository.UpdateTaskLogRetryCountParams{
 			// #nosec G115 -- retryCount is bounded and will never exceed int32
 			Retries: db.PGInt4Field(int32(retryCount)),
-			JobID:   jobID,
+			TaskID:  taskID,
 		})
 		if err != nil {
-			config.LOGGER.Error("failed to insert retry count log for job", zap.String("job_id", jobID), zap.Int("retry_count", retryCount), zap.Error(err))
+			config.LOGGER.Error("failed to insert retry count log for task", zap.String("task_id", taskID), zap.Int("retry_count", retryCount), zap.Error(err))
 		}
 	}
 
@@ -121,14 +121,14 @@ func HandleAuthTokenRenewalTask(ctx context.Context, t *asynq.Task) error {
 
 	_, expiresIn, err := provider.RenewOAuthTokens(ctx, conn, *accountID, refreshToken)
 	if err != nil {
-		dbErr := queries.UpdateJobLogFailed(ctx, repository.UpdateJobLogFailedParams{
-			Error: db.PGTextField(err.Error()),
-			JobID: jobID,
+		dbErr := queries.UpdateTaskLogFailed(ctx, repository.UpdateTaskLogFailedParams{
+			Error:  db.PGTextField(err.Error()),
+			TaskID: taskID,
 		})
 		if dbErr != nil {
 			config.LOGGER.Error(
-				"failed to insert failed log for job",
-				zap.String("job_id", jobID),
+				"failed to insert failed log for task",
+				zap.String("task_id", taskID),
 				zap.Error(err),
 			)
 		}
@@ -136,14 +136,14 @@ func HandleAuthTokenRenewalTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	err = queries.UpdateJobLogFinish(ctx, repository.UpdateJobLogFinishParams{
+	err = queries.UpdateTaskLogFinish(ctx, repository.UpdateTaskLogFinishParams{
 		FinishedAt: db.PGTimestamptzField(time.Now()),
-		JobID:      jobID,
+		TaskID:     taskID,
 	})
 	if err != nil {
 		config.LOGGER.Error(
-			"failed to insert finish log for job",
-			zap.String("job_id", jobID),
+			"failed to insert finish log for task",
+			zap.String("task_id", taskID),
 			zap.Error(err),
 		)
 	}

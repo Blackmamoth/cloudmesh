@@ -11,51 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type JobStatusEnum string
-
-const (
-	JobStatusEnumQueued     JobStatusEnum = "queued"
-	JobStatusEnumProcessing JobStatusEnum = "processing"
-	JobStatusEnumSucceeded  JobStatusEnum = "succeeded"
-	JobStatusEnumFailed     JobStatusEnum = "failed"
-	JobStatusEnumRetrying   JobStatusEnum = "retrying"
-)
-
-func (e *JobStatusEnum) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = JobStatusEnum(s)
-	case string:
-		*e = JobStatusEnum(s)
-	default:
-		return fmt.Errorf("unsupported scan type for JobStatusEnum: %T", src)
-	}
-	return nil
-}
-
-type NullJobStatusEnum struct {
-	JobStatusEnum JobStatusEnum `json:"job_status_enum"`
-	Valid         bool          `json:"valid"` // Valid is true if JobStatusEnum is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullJobStatusEnum) Scan(value interface{}) error {
-	if value == nil {
-		ns.JobStatusEnum, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.JobStatusEnum.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullJobStatusEnum) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.JobStatusEnum), nil
-}
-
 type ProviderEnum string
 
 const (
@@ -99,6 +54,51 @@ func (ns NullProviderEnum) Value() (driver.Value, error) {
 	return string(ns.ProviderEnum), nil
 }
 
+type TaskStatusEnum string
+
+const (
+	TaskStatusEnumQueued     TaskStatusEnum = "queued"
+	TaskStatusEnumProcessing TaskStatusEnum = "processing"
+	TaskStatusEnumSucceeded  TaskStatusEnum = "succeeded"
+	TaskStatusEnumFailed     TaskStatusEnum = "failed"
+	TaskStatusEnumRetrying   TaskStatusEnum = "retrying"
+)
+
+func (e *TaskStatusEnum) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TaskStatusEnum(s)
+	case string:
+		*e = TaskStatusEnum(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TaskStatusEnum: %T", src)
+	}
+	return nil
+}
+
+type NullTaskStatusEnum struct {
+	TaskStatusEnum TaskStatusEnum `json:"task_status_enum"`
+	Valid          bool           `json:"valid"` // Valid is true if TaskStatusEnum is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTaskStatusEnum) Scan(value interface{}) error {
+	if value == nil {
+		ns.TaskStatusEnum, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TaskStatusEnum.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTaskStatusEnum) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TaskStatusEnum), nil
+}
+
 type Account struct {
 	ID                    string           `json:"id"`
 	AccountID             string           `json:"account_id"`
@@ -119,22 +119,6 @@ type DrizzleDrizzleMigration struct {
 	ID        int32       `json:"id"`
 	Hash      string      `json:"hash"`
 	CreatedAt pgtype.Int8 `json:"created_at"`
-}
-
-type JobLog struct {
-	ID         pgtype.UUID        `json:"id"`
-	JobID      string             `json:"job_id"`
-	AccountID  pgtype.UUID        `json:"account_id"`
-	Type       string             `json:"type"`
-	Status     JobStatusEnum      `json:"status"`
-	Queue      string             `json:"queue"`
-	Params     []byte             `json:"params"`
-	Error      pgtype.Text        `json:"error"`
-	Retries    pgtype.Int4        `json:"retries"`
-	StartedAt  pgtype.Timestamptz `json:"started_at"`
-	FinishedAt pgtype.Timestamptz `json:"finished_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Jwk struct {
@@ -195,6 +179,22 @@ type SyncedItem struct {
 	ContentHash    pgtype.Text        `json:"content_hash"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskLog struct {
+	ID         pgtype.UUID        `json:"id"`
+	TaskID     string             `json:"task_id"`
+	AccountID  pgtype.UUID        `json:"account_id"`
+	Type       string             `json:"type"`
+	Status     TaskStatusEnum     `json:"status"`
+	Queue      string             `json:"queue"`
+	Params     []byte             `json:"params"`
+	Error      pgtype.Text        `json:"error"`
+	Retries    pgtype.Int4        `json:"retries"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
