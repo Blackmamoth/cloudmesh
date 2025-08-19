@@ -67,6 +67,17 @@ func (q *Queries) GetAccountByProviderID(ctx context.Context, arg GetAccountByPr
 	return id, err
 }
 
+const getAuthTokenExpiry = `-- name: GetAuthTokenExpiry :one
+SELECT expiry FROM linked_account WHERE id = $1
+`
+
+func (q *Queries) GetAuthTokenExpiry(ctx context.Context, accountID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getAuthTokenExpiry, accountID)
+	var expiry pgtype.Timestamptz
+	err := row.Scan(&expiry)
+	return expiry, err
+}
+
 const getAuthTokens = `-- name: GetAuthTokens :one
 SELECT provider, access_token, refresh_token FROM linked_account WHERE
 user_id = $1 AND id = $2

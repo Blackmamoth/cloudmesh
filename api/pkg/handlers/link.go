@@ -185,7 +185,6 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 	token, userId, accountInfo, err := provider.GetToken(w, r, store)
 	if err != nil {
 		h.logAndRedirectError(w, r, "GetToken failed", providerName, err)
-
 		return
 	}
 
@@ -197,7 +196,6 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 	conn, err := h.connPool.Acquire(r.Context())
 	if err != nil {
 		h.logAndRedirectError(w, r, "failed to acquire connection", providerName, err)
-
 		return
 	}
 	defer conn.Release()
@@ -210,13 +208,11 @@ func (h *LinkHandler) linkAccountCallback(w http.ResponseWriter, r *http.Request
 	)
 	if err != nil {
 		h.logAndRedirectError(w, r, "account upsert failed", providerName, err)
-
 		return
 	}
 
-	if err = h.scheduleBackgroundJobs(r.Context(), userId, providerName, accountID, token, queries); err != nil {
-		h.logAndRedirectError(w, r, "scheduling jobs failed", providerName, err)
-
+	if err = h.scheduleBackgroundTasks(r.Context(), userId, providerName, accountID, token, queries); err != nil {
+		h.logAndRedirectError(w, r, "scheduling tasks failed", providerName, err)
 		return
 	}
 
@@ -243,7 +239,7 @@ func (h *LinkHandler) logAndRedirectError(
 	h.errorRedirect(w, r)
 }
 
-func (h *LinkHandler) scheduleBackgroundJobs(
+func (h *LinkHandler) scheduleBackgroundTasks(
 	ctx context.Context,
 	userID, providerName, accountID string,
 	token *oauth2.Token,
@@ -289,6 +285,10 @@ func (h *LinkHandler) upsertAccount(
 
 	successQuery := "newAccount"
 
+	tokenExpiryDuration := time.Duration(token.ExpiresIn) * time.Second
+
+	tokenExpiry := time.Now().Add(tokenExpiryDuration)
+
 	addCountParams := repository.AddAccountDetailsParams{
 		UserID:         userID,
 		Provider:       repository.ProviderEnum(providerName),
@@ -296,7 +296,7 @@ func (h *LinkHandler) upsertAccount(
 		AccessToken:    encAccessToken,
 		RefreshToken:   encRefreshToken,
 		TokenType:      db.PGTextField(token.TokenType),
-		Expiry:         db.PGTimestamptzField(token.Expiry),
+		Expiry:         db.PGTimestamptzField(tokenExpiry),
 		Email:          accountInfo.Email,
 		Name:           accountInfo.Name,
 		AvatarUrl:      db.PGTextField(accountInfo.AvatarURL),
@@ -449,17 +449,17 @@ func (h *LinkHandler) enqueueFileSyncTaskAndLog(
 		return nil
 	}
 
-	err = queries.AddNewJobLog(ctx, repository.AddNewJobLogParams{
-		JobID:     info.ID,
+	err = queries.AddNewTaskLog(ctx, repository.AddNewTaskLogParams{
+		TaskID:    info.ID,
 		AccountID: *accountUUID,
 		Type:      info.Type,
-		Status:    repository.JobStatusEnumQueued,
+		Status:    repository.TaskStatusEnumQueued,
 		Queue:     info.Queue,
 		Params:    params,
 	})
 	if err != nil {
 		config.LOGGER.Error(
-			"failed to insert job log",
+			"failed to insert task log",
 			zap.String("provider", providerName),
 			zap.String("task_type", tasks.TypeFileSync),
 			zap.String("task_id", info.ID),
@@ -535,17 +535,17 @@ func (h *LinkHandler) enqueueAuthTokenRenewalTaskAndLog(
 		return nil
 	}
 
-	err = queries.AddNewJobLog(ctx, repository.AddNewJobLogParams{
-		JobID:     info.ID,
+	err = queries.AddNewTaskLog(ctx, repository.AddNewTaskLogParams{
+		TaskID:    info.ID,
 		AccountID: *accountUUID,
 		Type:      info.Type,
-		Status:    repository.JobStatusEnumQueued,
+		Status:    repository.TaskStatusEnumQueued,
 		Queue:     info.Queue,
 		Params:    params,
 	})
 	if err != nil {
 		config.LOGGER.Error(
-			"failed to insert job log",
+			"failed to insert task log",
 			zap.String("provider", providerName),
 			zap.String("task_type", tasks.TypeAuthTokenRenewal),
 			zap.String("task_id", info.ID),

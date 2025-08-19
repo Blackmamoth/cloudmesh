@@ -167,6 +167,13 @@ func (p *GoogleProvider) SyncFiles(
 		return err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
@@ -260,7 +267,7 @@ func (p *GoogleProvider) SyncFiles(
 		insertedRows, err = p.bulkInsertSyncedItems(
 			ctx,
 			conn,
-			*queries,
+			queries,
 			providerFileIDs,
 			accountID,
 			files,
@@ -415,7 +422,7 @@ func (p *GoogleProvider) GetHTTPClient(
 func (p *GoogleProvider) GetStorageQuota(
 	ctx context.Context,
 	userID string,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	encryptedAccessToken, encryptedRefreshToken string,
 ) (*StorageQuota, error) {
 	storageQuotaKey := fmt.Sprintf("storage:google:%s:%s", userID, accountID.String())
@@ -465,6 +472,13 @@ func (p *GoogleProvider) GetStorageQuota(
 		)
 
 		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -525,7 +539,7 @@ func (p *GoogleProvider) GetStorageQuota(
 
 func (p *GoogleProvider) UploadFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -551,6 +565,13 @@ func (p *GoogleProvider) UploadFiles(
 		)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -600,9 +621,9 @@ func (p *GoogleProvider) UploadFiles(
 		return err
 	}
 
-	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
+	files, _ := p.convertToSyncedItemSlice(results, accountID, false)
 
-	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files)
+	_, err = p.bulkInsertSyncedItems(ctx, conn, queries, []string{}, accountID, files)
 	if err != nil {
 		config.LOGGER.Error(
 			"failed to insert newly uploaded files",
@@ -627,7 +648,7 @@ func (p *GoogleProvider) UploadFiles(
 
 func (p *GoogleProvider) MoveToTrash(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -653,6 +674,13 @@ func (p *GoogleProvider) MoveToTrash(
 		)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -706,7 +734,7 @@ func (p *GoogleProvider) MoveToTrash(
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -720,7 +748,7 @@ func (p *GoogleProvider) MoveToTrash(
 
 func (p *GoogleProvider) PermanentlyDeleteFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -746,6 +774,13 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(
 		)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -799,7 +834,7 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(
 
 		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -858,6 +893,13 @@ func (p *GoogleProvider) SearchByContent(
 		)
 
 		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -1059,7 +1101,7 @@ func (p *GoogleProvider) convertToSyncedItemSlice(
 func (p *GoogleProvider) bulkInsertSyncedItems(
 	ctx context.Context,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 	providerFileIDs []string,
 	accountID pgtype.UUID,
 	files []repository.AddSyncedItemsParams,
@@ -1117,7 +1159,7 @@ func (p *GoogleProvider) CreateFolder(
 	parentFolder ParentFolder,
 	account repository.GetLinkedAccountRow,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 ) error {
 	logFields := []zap.Field{
 		zap.String("provider", GOOGLE_PROVIDER_NAME),
@@ -1135,6 +1177,13 @@ func (p *GoogleProvider) CreateFolder(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)

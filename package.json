@@ -5,5 +5,12 @@
 	},
 	"scripts": {
 		"prepare": "husky"
+	},
+	"lint-staged": {
+		"*": [
+			"make format",
+			"make lint",
+			"git add ."
+		]
 	}
 }

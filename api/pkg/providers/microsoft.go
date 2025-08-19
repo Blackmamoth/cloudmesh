@@ -367,6 +367,13 @@ func (p *MicrosoftProvider) SyncFiles(
 		return err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	for {
 		oneDriveResponse, err := p.getOneDriveDeltaFiles(
 			ctx,
@@ -407,7 +414,7 @@ func (p *MicrosoftProvider) SyncFiles(
 		insertedRows, err = p.bulkInsertSyncedItems(
 			ctx,
 			conn,
-			*queries,
+			queries,
 			providerFileIDs,
 			accountID,
 			files,
@@ -573,7 +580,7 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(
 func (p *MicrosoftProvider) bulkInsertSyncedItems(
 	ctx context.Context,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 	providerFileIDs []string,
 	accountID pgtype.UUID,
 	files []repository.AddSyncedItemsParams,
@@ -745,7 +752,7 @@ func (p *MicrosoftProvider) RenewOAuthTokens(
 
 func (p *MicrosoftProvider) UploadFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -762,6 +769,21 @@ func (p *MicrosoftProvider) UploadFiles(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	var (
@@ -798,14 +820,14 @@ func (p *MicrosoftProvider) UploadFiles(
 		return err
 	}
 
-	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
+	files, _ := p.convertToSyncedItemSlice(results, accountID, false)
 
 	insertRowCount, err := p.bulkInsertSyncedItems(
 		ctx,
 		conn,
-		*queries,
+		queries,
 		[]string{},
-		*accountID,
+		accountID,
 		files,
 		"",
 	)
@@ -910,7 +932,7 @@ func (p *MicrosoftProvider) uploadFiles(
 
 func (p *MicrosoftProvider) MoveToTrash(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -927,6 +949,21 @@ func (p *MicrosoftProvider) MoveToTrash(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	var (
@@ -968,7 +1005,7 @@ func (p *MicrosoftProvider) MoveToTrash(
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -1039,7 +1076,7 @@ func (p *MicrosoftProvider) moveToTrash(ctx context.Context, accessToken, fileID
 
 func (p *MicrosoftProvider) PermanentlyDeleteFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -1077,6 +1114,21 @@ func (p *MicrosoftProvider) SearchByContent(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	providerFileIDs := []string{}
@@ -1188,7 +1240,7 @@ func (p *MicrosoftProvider) searchByContent(
 func (p *MicrosoftProvider) GetStorageQuota(
 	ctx context.Context,
 	userID string,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	encryptedAccessToken, encryptedRefreshToken string,
 ) (*StorageQuota, error) {
 	logFields := []zap.Field{
@@ -1227,6 +1279,21 @@ func (p *MicrosoftProvider) GetStorageQuota(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(encryptedRefreshToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	url := MICROSOFT_GRAPH_API_BASE_URL + "/me/drive"
@@ -1308,7 +1375,7 @@ func (p *MicrosoftProvider) CreateFolder(
 	parentFolder ParentFolder,
 	account repository.GetLinkedAccountRow,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 ) error {
 	logFields := []zap.Field{
 		zap.String("provider", MICROSOFT_PROVIDER_NAME),
@@ -1319,6 +1386,20 @@ func (p *MicrosoftProvider) CreateFolder(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	url := MICROSOFT_GRAPH_API_BASE_URL + "/me/drive/root/children"

@@ -1,14 +1,14 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TYPE job_status_enum AS ENUM ('queued', 'processing', 'succeeded', 'failed', 'retrying');
+CREATE TYPE task_status_enum AS ENUM ('queued', 'processing', 'succeeded', 'failed', 'retrying');
 
-CREATE TABLE IF NOT EXISTS job_logs (
+CREATE TABLE IF NOT EXISTS task_logs (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     
-    job_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
     account_id UUID NOT NULL,
     type TEXT NOT NULL,
-    status job_status_enum NOT NULL,
+    status task_status_enum NOT NULL,
     queue TEXT NOT NULL,
     
     params JSONB DEFAULT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS job_logs (
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE IF EXISTS job_logs;
+DROP TABLE IF EXISTS task_logs;
 
-DROP TYPE IF EXISTS job_status_enum;
+DROP TYPE IF EXISTS task_status_enum;
 -- +goose StatementEnd

@@ -298,6 +298,13 @@ func (p *DropboxProvider) SyncFiles(
 		return err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	for {
 		dropboxResponse, err := p.getDropboxFolderList(
 			ctx,
@@ -328,7 +335,7 @@ func (p *DropboxProvider) SyncFiles(
 		insertedRows, err = p.bulkInsertSyncedItems(
 			ctx,
 			conn,
-			*queries,
+			queries,
 			providerFileIDs,
 			accountID,
 			files,
@@ -563,7 +570,7 @@ func (p *DropboxProvider) RenewOAuthTokens(
 func (p *DropboxProvider) GetStorageQuota(
 	ctx context.Context,
 	userID string,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	encryptedAccessToken, encryptedRefreshToken string,
 ) (*StorageQuota, error) {
 	storageQuotaKey := fmt.Sprintf("storage:dropbox:%s:%s", userID, accountID.String())
@@ -602,6 +609,24 @@ func (p *DropboxProvider) GetStorageQuota(
 		)
 
 		return nil, err
+	}
+
+	refreshToken, err := utils.Decrypt(encryptedRefreshToken)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to decrypt refresh token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	url := DROPBOX_API_BASE_URL + "/2/users/get_space_usage"
@@ -684,7 +709,7 @@ func (p *DropboxProvider) GetStorageQuota(
 
 func (p *DropboxProvider) UploadFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -699,6 +724,24 @@ func (p *DropboxProvider) UploadFiles(
 		)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to decrypt refresh token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	var (
@@ -735,9 +778,9 @@ func (p *DropboxProvider) UploadFiles(
 		return err
 	}
 
-	files, _ := p.convertToSyncedItemSlice(results, *accountID, false)
+	files, _ := p.convertToSyncedItemSlice(results, accountID, false)
 
-	_, err = p.bulkInsertSyncedItems(ctx, conn, *queries, []string{}, *accountID, files, "")
+	_, err = p.bulkInsertSyncedItems(ctx, conn, queries, []string{}, accountID, files, "")
 	if err != nil {
 		config.LOGGER.Error(
 			"failed to insert newly uploaded files",
@@ -854,7 +897,7 @@ func (p *DropboxProvider) uploadToDropbox(
 
 func (p *DropboxProvider) MoveToTrash(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -869,6 +912,24 @@ func (p *DropboxProvider) MoveToTrash(
 		)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to decrypt refresh token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	var (
@@ -909,7 +970,7 @@ func (p *DropboxProvider) MoveToTrash(
 
 		return qx.SetFileTrashed(ctx, repository.SetFileTrashedParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -923,7 +984,7 @@ func (p *DropboxProvider) MoveToTrash(
 
 func (p *DropboxProvider) PermanentlyDeleteFiles(
 	ctx context.Context,
-	accountID *pgtype.UUID,
+	accountID pgtype.UUID,
 	conn *pgxpool.Conn,
 	queries *repository.Queries,
 	authTokens repository.GetAuthTokensRow,
@@ -938,6 +999,24 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(
 		)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(authTokens.RefreshToken)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to decrypt refresh token",
+			zap.String("provider", DROPBOX_PROVIDER_NAME),
+			zap.Error(err),
+		)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	var (
@@ -978,7 +1057,7 @@ func (p *DropboxProvider) PermanentlyDeleteFiles(
 
 		return qx.DeleteSyncedItems(ctx, repository.DeleteSyncedItemsParams{
 			FileIds:   fileIDs,
-			AccountID: *accountID,
+			AccountID: accountID,
 		})
 	})
 	if err != nil {
@@ -1031,12 +1110,19 @@ func (p *DropboxProvider) SearchByContent(
 	refreshToken, err := utils.Decrypt(account.RefreshToken)
 	if err != nil {
 		config.LOGGER.Error(
-			"failed to decrypt access token",
+			"failed to decrypt refresh token",
 			zap.String("provider", DROPBOX_PROVIDER_NAME),
 			zap.Error(err),
 		)
 
 		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	providerFileIDs := []string{}
@@ -1345,7 +1431,7 @@ func (p *DropboxProvider) permanentlyDeleteFile(
 func (p *DropboxProvider) bulkInsertSyncedItems(
 	ctx context.Context,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 	providerFileIDs []string,
 	accountID pgtype.UUID,
 	files []repository.AddSyncedItemsParams,
@@ -1452,7 +1538,7 @@ func (p *DropboxProvider) CreateFolder(
 	parentFolder ParentFolder,
 	account repository.GetLinkedAccountRow,
 	conn *pgxpool.Conn,
-	queries repository.Queries,
+	queries *repository.Queries,
 ) error {
 	logFields := []zap.Field{
 		zap.String("provider", DROPBOX_PROVIDER_NAME),
@@ -1464,6 +1550,21 @@ func (p *DropboxProvider) CreateFolder(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	refreshToken, err := utils.Decrypt(account.RefreshToken)
+	if err != nil {
+		logFields = append(logFields, zap.Error(err))
+		config.LOGGER.Error("failed to decrypt refresh token", logFields...)
+
+		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	parentPath := parentFolder.Path

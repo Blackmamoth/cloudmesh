@@ -103,7 +103,7 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 		storageQuota, err := provider.GetStorageQuota(
 			r.Context(),
 			userID,
-			&account.ID,
+			account.ID,
 			account.AccessToken,
 			account.RefreshToken,
 		)

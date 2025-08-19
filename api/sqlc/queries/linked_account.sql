@@ -24,6 +24,9 @@ SELECT id, access_token, refresh_token, provider FROM linked_account WHERE user_
 SELECT provider, access_token, refresh_token FROM linked_account WHERE
 user_id = @user_id AND id = @account_id;
 
+-- name: GetAuthTokenExpiry :one
+SELECT expiry FROM linked_account WHERE id = @account_id;
+
 -- name: UpdateLastSyncedTimestamp :exec
 UPDATE linked_account SET last_synced_at = NOW(), sync_page_token = @sync_page_token WHERE id = @account_id;
 
