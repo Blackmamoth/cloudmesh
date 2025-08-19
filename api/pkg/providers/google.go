@@ -167,6 +167,13 @@ func (p *GoogleProvider) SyncFiles(
 		return err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
@@ -467,6 +474,13 @@ func (p *GoogleProvider) GetStorageQuota(
 		return nil, err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
@@ -551,6 +565,13 @@ func (p *GoogleProvider) UploadFiles(
 		)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -655,6 +676,13 @@ func (p *GoogleProvider) MoveToTrash(
 		return err
 	}
 
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
+	}
+
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
 
 	driveService, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
@@ -746,6 +774,13 @@ func (p *GoogleProvider) PermanentlyDeleteFiles(
 		)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, *accountID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -858,6 +893,13 @@ func (p *GoogleProvider) SearchByContent(
 		)
 
 		return nil, err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
@@ -1135,6 +1177,13 @@ func (p *GoogleProvider) CreateFolder(
 		config.LOGGER.Error("failed to decrypt access token", logFields...)
 
 		return err
+	}
+
+	_, pool := db.GetPGClient()
+
+	accessToken, err = EnsureValidAccesstoken(ctx, pool, account.ID, accessToken, refreshToken, p)
+	if err != nil {
+		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
 	httpClient := p.GetHTTPClient(ctx, accessToken, refreshToken)
