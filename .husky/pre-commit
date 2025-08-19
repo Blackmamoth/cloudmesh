@@ -1,2 +1,1 @@
-make lint
-make format
+pnpm lint-staged

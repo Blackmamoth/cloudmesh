@@ -303,7 +303,13 @@ func exchangeToken(
 	return tok, receivedOauthState.UserID, accountInfo, nil
 }
 
-func EnsureValidAccesstoken(ctx context.Context, pool *pgxpool.Pool, accountID pgtype.UUID, accessToken, refreshToken string, p Provider) (string, error) {
+func EnsureValidAccesstoken(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	accountID pgtype.UUID,
+	accessToken, refreshToken string,
+	p Provider,
+) (string, error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return accessToken, nil
@@ -313,13 +319,22 @@ func EnsureValidAccesstoken(ctx context.Context, pool *pgxpool.Pool, accountID p
 	return ensureValidAccessToken(ctx, accountID, conn, accessToken, refreshToken, p)
 }
 
-func ensureValidAccessToken(ctx context.Context, accountID pgtype.UUID, conn *pgxpool.Conn, accessToken, refreshToken string, p Provider) (string, error) {
-
+func ensureValidAccessToken(
+	ctx context.Context,
+	accountID pgtype.UUID,
+	conn *pgxpool.Conn,
+	accessToken, refreshToken string,
+	p Provider,
+) (string, error) {
 	queries := repository.New(conn)
 
 	tokenExpiry, err := queries.GetAuthTokenExpiry(ctx, accountID)
 	if err != nil {
-		config.LOGGER.Error("failed to fetch auth token expiry for an account", zap.String("account_id", accountID.String()), zap.Error(err))
+		config.LOGGER.Error(
+			"failed to fetch auth token expiry for an account",
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
 		return "", err
 	}
 
@@ -327,15 +342,24 @@ func ensureValidAccessToken(ctx context.Context, accountID pgtype.UUID, conn *pg
 		return accessToken, nil
 	}
 	if time.Now().Add(5 * time.Minute).After(tokenExpiry.Time) {
-		config.LOGGER.Info("access token expires soon, refreshing", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Time("expiry", tokenExpiry.Time))
+		config.LOGGER.Info(
+			"access token expires soon, refreshing",
+			zap.String("provider", GOOGLE_PROVIDER_NAME),
+			zap.String("account_id", accountID.String()),
+			zap.Time("expiry", tokenExpiry.Time),
+		)
 
 		newAccessToken, _, err := p.RenewOAuthTokens(ctx, conn, accountID, refreshToken)
 		if err != nil {
-			config.LOGGER.Error("failed to renew auth tokens", zap.String("provider", GOOGLE_PROVIDER_NAME), zap.String("account_id", accountID.String()), zap.Error(err))
+			config.LOGGER.Error(
+				"failed to renew auth tokens",
+				zap.String("provider", GOOGLE_PROVIDER_NAME),
+				zap.String("account_id", accountID.String()),
+				zap.Error(err),
+			)
 			return accessToken, err
 		}
 		return newAccessToken, nil
-
 	}
 	return accessToken, nil
 }
