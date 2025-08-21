@@ -13,3 +13,8 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         sql_package: "pgx/v5"
+        overrides:
+          - column: "synced_items.owner_info"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"

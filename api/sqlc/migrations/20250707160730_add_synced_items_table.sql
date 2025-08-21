@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS synced_items (
     is_folder BOOLEAN NOT NULL,
     is_trashed BOOLEAN DEFAULT FALSE,
 
+    owner_info JSONB DEFAULT '{"display_name": null, "email": null, "photo_link": null}'::jsonb,
+
     mime_type TEXT DEFAULT NULL,
     created_time TIMESTAMPTZ DEFAULT NULL,
     modified_time TIMESTAMPTZ DEFAULT NULL,

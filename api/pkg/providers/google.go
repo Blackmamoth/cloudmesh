@@ -219,7 +219,7 @@ func (p *GoogleProvider) SyncFiles(
 		fileList, err := driveService.Files.
 			List().
 			Q(query).
-			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed)").
+			Fields("files(id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed,owners,ownedByMe)").
 			PageToken(pageToken).
 			PageSize(1000).
 			Do()
@@ -1070,6 +1070,24 @@ func (p *GoogleProvider) convertToSyncedItemSlice(
 			parentFolder = file.Parents[0]
 		}
 
+		var ownerInfoJSON []byte
+		if len(file.Owners) > 0 {
+			ownerInfo := map[string]string{
+				"display_name": file.Owners[0].DisplayName,
+				"email":        file.Owners[0].EmailAddress,
+				"photo_link":   file.Owners[0].PhotoLink,
+			}
+
+			var err error
+			ownerInfoJSON, err = json.Marshal(ownerInfo)
+			if err != nil {
+				config.LOGGER.Error("failed to marshal owner info", zap.Error(err))
+				ownerInfoJSON = []byte("{}")
+			}
+		} else {
+			ownerInfoJSON = []byte("{}")
+		}
+
 		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
 			AccountID:      accountID,
 			ProviderFileID: file.Id,
@@ -1082,6 +1100,7 @@ func (p *GoogleProvider) convertToSyncedItemSlice(
 			ParentFolder:   db.PGTextField(parentFolder),
 			IsFolder:       isFolder,
 			IsTrashed:      db.PGBool(file.Trashed),
+			OwnerInfo:      ownerInfoJSON,
 			ContentHash:    db.PGTextField(file.Sha256Checksum),
 			ThumbnailLink:  db.PGTextField(file.ThumbnailLink),
 			PreviewLink:    db.PGTextField(previewLink),
@@ -1208,7 +1227,7 @@ func (p *GoogleProvider) CreateFolder(
 	}
 
 	folder, err := driveService.Files.Create(&driveFolder).
-		Fields("id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed").
+		Fields("id, name, size, mimeType, createdTime, modifiedTime, thumbnailLink, fullFileExtension, parents, webViewLink, webContentLink, iconLink, sha256Checksum, trashed, owners, ownedByMe").
 		Do()
 	if err != nil {
 		logFields = append(logFields, zap.Error(err))

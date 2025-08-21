@@ -1,15 +1,19 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 
 	"github.com/blackmamoth/cloudmesh/pkg/config"
+	"github.com/blackmamoth/cloudmesh/pkg/db"
 	"github.com/blackmamoth/cloudmesh/pkg/middlewares"
 	"github.com/blackmamoth/cloudmesh/pkg/providers"
 	"github.com/blackmamoth/cloudmesh/pkg/utils"
 	"github.com/blackmamoth/cloudmesh/repository"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -31,6 +35,10 @@ type AccountDetail struct {
 	UsedStorage  int64              `json:"used_storage"`
 }
 
+type UnlinkAccountValidation struct {
+	AccountID string `validate:"required,uuid" json:"account_id"`
+}
+
 func NewAccountHandler(
 	connPool *pgxpool.Pool,
 	authMiddleware *middlewares.AuthMiddleware,
@@ -47,6 +55,8 @@ func (h *AccountHandler) RegisterRoutes() *chi.Mux {
 	r.Use(h.authMiddleware.VerifyAccessToken)
 
 	r.Get("/get-accounts", h.getAccounts)
+
+	r.Delete("/unlink-account", h.unlinkAccount)
 
 	return r
 }
@@ -151,6 +161,97 @@ func (h *AccountHandler) getAccounts(w http.ResponseWriter, r *http.Request) {
 		"last_synced":    lastSyncedTime,
 		"total_accounts": len(accountDetails),
 	})
+}
+
+func (h *AccountHandler) unlinkAccount(w http.ResponseWriter, r *http.Request) {
+	payload, ok := utils.ParseAndValidate[UnlinkAccountValidation](w, r, true)
+	if !ok {
+		return
+	}
+
+	accountID, err := db.PGUUID(payload.AccountID)
+	if err != nil {
+		config.LOGGER.Error("failed to parse account uuid", zap.Error(err))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusBadRequest,
+			errors.New("could not validate user credentials"),
+		)
+	}
+
+	userID, ok := r.Context().Value(middlewares.UserKey).(string)
+	if !ok {
+		config.LOGGER.Error("invalid userid", zap.Any("user_id_received", userID))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusBadRequest,
+			errors.New("could not validate user credentials"),
+		)
+
+		return
+	}
+
+	conn, err := h.connPool.Acquire(r.Context())
+	if err != nil {
+		config.LOGGER.Error("failed to acquire new connection from connection pool", zap.Error(err))
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			errors.New("failed to process your request, please try again later"),
+		)
+
+		return
+	}
+	defer conn.Release()
+
+	queries := repository.New(conn)
+
+	_, err = queries.GetLinkedAccount(r.Context(), repository.GetLinkedAccountParams{
+		UserID:    userID,
+		AccountID: *accountID,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			utils.SendAPIErrorResponse(
+				w,
+				http.StatusBadRequest,
+				"account does not exist or does not belong to the user",
+			)
+		} else {
+			config.LOGGER.Error("failed to fetch linked account", zap.String("user_id", userID), zap.String("account_id", accountID.String()), zap.Error(err))
+			utils.SendAPIErrorResponse(w, http.StatusInternalServerError, "failed to fetch your account details")
+		}
+		return
+	}
+
+	err = utils.WithTransaction(r.Context(), conn, func(ctx context.Context, tx pgx.Tx) error {
+		qtx := repository.New(conn).WithTx(tx)
+
+		return qtx.DeleteLinkedAccount(ctx, repository.DeleteLinkedAccountParams{
+			AccountID: *accountID,
+			UserID:    userID,
+		})
+	})
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to delete linked account",
+			zap.String("user_id", userID),
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
+		utils.SendAPIErrorResponse(
+			w,
+			http.StatusInternalServerError,
+			errors.New("your account could not be deleted"),
+		)
+		return
+	}
+
+	utils.SendAPIResponse(
+		w,
+		http.StatusOK,
+		map[string]string{"message": "Your account was successfully unlinked"},
+	)
 }
 
 func (h *AccountHandler) groupAccountsByProvider(

@@ -6,6 +6,7 @@ package repository
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -168,6 +169,7 @@ type SyncedItem struct {
 	ParentFolder   pgtype.Text        `json:"parent_folder"`
 	IsFolder       bool               `json:"is_folder"`
 	IsTrashed      pgtype.Bool        `json:"is_trashed"`
+	OwnerInfo      json.RawMessage    `json:"owner_info"`
 	MimeType       pgtype.Text        `json:"mime_type"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`

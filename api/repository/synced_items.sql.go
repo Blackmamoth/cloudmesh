@@ -7,6 +7,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,6 +23,7 @@ type AddSyncedItemsParams struct {
 	ParentFolder   pgtype.Text        `json:"parent_folder"`
 	IsFolder       bool               `json:"is_folder"`
 	IsTrashed      pgtype.Bool        `json:"is_trashed"`
+	OwnerInfo      json.RawMessage    `json:"owner_info"`
 	ContentHash    pgtype.Text        `json:"content_hash"`
 	CreatedTime    pgtype.Timestamptz `json:"created_time"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
@@ -184,9 +186,7 @@ SELECT synced_items.id,
        synced_items.web_view_link,
        synced_items.web_content_link,
        synced_items.modified_time,
-       linked_account.name AS account_name,
-       linked_account.avatar_url,
-       linked_account.provider
+       synced_items.owner_info
 FROM   synced_items
        JOIN linked_account
          ON linked_account.id = synced_items.account_id
@@ -252,9 +252,7 @@ type GetSyncedItemsRow struct {
 	WebViewLink    pgtype.Text        `json:"web_view_link"`
 	WebContentLink pgtype.Text        `json:"web_content_link"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
-	AccountName    string             `json:"account_name"`
-	AvatarUrl      pgtype.Text        `json:"avatar_url"`
-	Provider       ProviderEnum       `json:"provider"`
+	OwnerInfo      json.RawMessage    `json:"owner_info"`
 }
 
 func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) ([]GetSyncedItemsRow, error) {
@@ -287,9 +285,7 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 			&i.WebViewLink,
 			&i.WebContentLink,
 			&i.ModifiedTime,
-			&i.AccountName,
-			&i.AvatarUrl,
-			&i.Provider,
+			&i.OwnerInfo,
 		); err != nil {
 			return nil, err
 		}

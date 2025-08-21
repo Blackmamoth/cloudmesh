@@ -33,14 +33,14 @@ type FilesHandler struct {
 }
 
 type GetFilesValidation struct {
-	Provider      string `validate:"omitempty,oneof=google dropbox" json:"provider"`
-	ParentFolder  string `validate:"omitempty"                      json:"parent_folder"`
-	Search        string `validate:"omitempty"                      json:"search"`
-	SortOn        string `validate:"omitempty"                      json:"sort_on"`
-	SortBy        string `validate:"omitempty"                      json:"sort_by"`
-	Limit         int32  `validate:"omitempty"                      json:"limit"`
-	Offset        int32  `validate:"omitempty"                      json:"offset"`
-	ContentSearch bool   `validate:"omitempty"                      json:"content_search"`
+	Provider      string `validate:"omitempty,oneof=google dropbox microsoft" json:"provider"`
+	ParentFolder  string `validate:"omitempty"                                json:"parent_folder"`
+	Search        string `validate:"omitempty"                                json:"search"`
+	SortOn        string `validate:"omitempty"                                json:"sort_on"`
+	SortBy        string `validate:"omitempty"                                json:"sort_by"`
+	Limit         int32  `validate:"omitempty"                                json:"limit"`
+	Offset        int32  `validate:"omitempty"                                json:"offset"`
+	ContentSearch bool   `validate:"omitempty"                                json:"content_search"`
 }
 
 type UploadFilesValidation struct {
