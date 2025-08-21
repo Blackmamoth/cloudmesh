@@ -186,7 +186,8 @@ SELECT synced_items.id,
        synced_items.web_view_link,
        synced_items.web_content_link,
        synced_items.modified_time,
-       synced_items.owner_info
+       synced_items.owner_info,
+       linked_account.provider
 FROM   synced_items
        JOIN linked_account
          ON linked_account.id = synced_items.account_id
@@ -253,6 +254,7 @@ type GetSyncedItemsRow struct {
 	WebContentLink pgtype.Text        `json:"web_content_link"`
 	ModifiedTime   pgtype.Timestamptz `json:"modified_time"`
 	OwnerInfo      json.RawMessage    `json:"owner_info"`
+	Provider       ProviderEnum       `json:"provider"`
 }
 
 func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) ([]GetSyncedItemsRow, error) {
@@ -286,6 +288,7 @@ func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) 
 			&i.WebContentLink,
 			&i.ModifiedTime,
 			&i.OwnerInfo,
+			&i.Provider,
 		); err != nil {
 			return nil, err
 		}
