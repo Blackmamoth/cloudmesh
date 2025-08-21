@@ -1,8 +1,8 @@
 -- name: AddSyncedItems :copyfrom
 INSERT INTO synced_items (
-    account_id, provider_file_id, name, extension, size, path, mime_type, parent_folder, is_folder, is_trashed, content_hash, created_time, modified_time, thumbnail_link, preview_link, web_view_link, web_content_link, link_expires_at
+    account_id, provider_file_id, name, extension, size, path, mime_type, parent_folder, is_folder, is_trashed, owner_info, content_hash, created_time, modified_time, thumbnail_link, preview_link, web_view_link, web_content_link, link_expires_at
 ) VALUES (
-    @account_id, @provider_file_id, @name, @extension , @size, @path, @mime_type, @parent_folder, @is_folder, @is_trashed, @content_hash, @created_time, @modified_time, @thumbnail_link, @preview_link, @web_view_link, @web_content_link, @link_expires_at
+    @account_id, @provider_file_id, @name, @extension , @size, @path, @mime_type, @parent_folder, @is_folder, @is_trashed, @owner_info, @content_hash, @created_time, @modified_time, @thumbnail_link, @preview_link, @web_view_link, @web_content_link, @link_expires_at
 );
 
 -- name: GetSyncedItems :many
@@ -16,6 +16,7 @@ SELECT synced_items.id,
        synced_items.web_view_link,
        synced_items.web_content_link,
        synced_items.modified_time,
+       synced_items.owner_info,
        linked_account.name AS account_name,
        linked_account.avatar_url,
        linked_account.provider

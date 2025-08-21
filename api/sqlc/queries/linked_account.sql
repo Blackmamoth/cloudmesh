@@ -38,3 +38,9 @@ SELECT last_synced_at FROM linked_account WHERE user_id = @user_id ORDER BY last
 
 -- name: GetLinkedAccount :one
 SELECT id, provider, access_token, refresh_token FROM linked_account WHERE user_id = @user_id AND id = @account_id;
+
+-- name: DeleteLinkedAccount :exec
+DELETE FROM linked_account WHERE id = @account_id AND user_id = @user_id;
+
+-- name: GetAccountUserByID :one
+SELECT name, email, avatar_url FROM linked_account WHERE id = @account_id;

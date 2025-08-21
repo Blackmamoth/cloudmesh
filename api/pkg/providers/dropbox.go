@@ -57,16 +57,23 @@ type DropboxAccountInfo struct {
 }
 
 type DropboxListFolderEntries struct {
-	ID             string    `json:"id"`
-	Tag            string    `json:".tag,omitempty"`
-	Name           string    `json:"name"`
-	PathDisplay    string    `json:"path_display"`
-	PathLower      string    `json:"path_lower"`
-	ClientModified time.Time `json:"client_modified"`
-	ServerModified time.Time `json:"server_modified"`
-	ContentHash    string    `json:"content_hash"`
-	Revision       string    `json:"rev"`
-	Size           int       `json:"size"`
+	ID             string              `json:"id"`
+	Tag            string              `json:".tag,omitempty"`
+	Name           string              `json:"name"`
+	PathDisplay    string              `json:"path_display"`
+	PathLower      string              `json:"path_lower"`
+	ClientModified time.Time           `json:"client_modified"`
+	ServerModified time.Time           `json:"server_modified"`
+	ContentHash    string              `json:"content_hash"`
+	Revision       string              `json:"rev"`
+	Size           int                 `json:"size"`
+	SharingInfo    *DropboxSharingInfo `json:"sharing_info,omitempty"`
+}
+
+type DropboxSharingInfo struct {
+	ReadOnly             bool   `json:"read_only,omitempty"`
+	ParentSharedFolderID string `json:"parent_shared_folder_id,omitempty"`
+	ModifiedBy           string `json:"modified_by,omitempty"`
 }
 
 type DropboxListFolderResponse struct {
@@ -305,6 +312,16 @@ func (p *DropboxProvider) SyncFiles(
 		config.LOGGER.Error("failed to validate access token", zap.Error(err))
 	}
 
+	accountUser, err := queries.GetAccountUserByID(ctx, accountID)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to fetch account user",
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+
 	for {
 		dropboxResponse, err := p.getDropboxFolderList(
 			ctx,
@@ -327,6 +344,7 @@ func (p *DropboxProvider) SyncFiles(
 		files, providerFileIDs := p.convertToSyncedItemSlice(
 			dropboxResponse.Entries,
 			accountID,
+			accountUser,
 			syncDetails.LastSyncedAt.Valid,
 		)
 
@@ -379,7 +397,9 @@ func (p *DropboxProvider) getDropboxFolderList(
 	accessToken, refreshToken, cursor string,
 ) (*DropboxListFolderResponse, error) {
 	url := DROPBOX_API_BASE_URL + "/2/files/list_folder"
-	reqBody := []byte(`{"path": "", "recursive": true, "include_deleted": true}`)
+	reqBody := []byte(
+		`{"path": "", "recursive": true, "include_deleted": true, "include_has_explicit_shared_members": true}`,
+	)
 
 	if cursor != "" {
 		url = url + "/continue"
@@ -778,7 +798,17 @@ func (p *DropboxProvider) UploadFiles(
 		return err
 	}
 
-	files, _ := p.convertToSyncedItemSlice(results, accountID, false)
+	accountUser, err := queries.GetAccountUserByID(ctx, accountID)
+	if err != nil {
+		config.LOGGER.Error(
+			"failed to fetch account user",
+			zap.String("account_id", accountID.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	files, _ := p.convertToSyncedItemSlice(results, accountID, accountUser, false)
 
 	_, err = p.bulkInsertSyncedItems(ctx, conn, queries, []string{}, accountID, files, "")
 	if err != nil {
@@ -1487,6 +1517,7 @@ func (p *DropboxProvider) bulkInsertSyncedItems(
 func (p *DropboxProvider) convertToSyncedItemSlice(
 	entries []DropboxListFolderEntries,
 	accountID pgtype.UUID,
+	accountUser repository.GetAccountUserByIDRow,
 	isValidLastSyncedData bool,
 ) ([]repository.AddSyncedItemsParams, []string) {
 	syncedItems := []repository.AddSyncedItemsParams{}
@@ -1499,8 +1530,22 @@ func (p *DropboxProvider) convertToSyncedItemSlice(
 
 		parentFolder := path.Dir(entry.PathDisplay)
 
-		if entry.Name == "bgnet_usl_c_1.pdf" {
-			config.LOGGER.Info("is_deleted", zap.String("value", entry.Tag))
+		var ownerInfoJSON []byte
+		if entry.SharingInfo == nil {
+			ownerInfo := map[string]string{
+				"display_name": accountUser.Name,
+				"email":        accountUser.Email,
+				"photo_link":   accountUser.AvatarUrl.String,
+			}
+
+			var err error
+			ownerInfoJSON, err = json.Marshal(ownerInfo)
+			if err != nil {
+				config.LOGGER.Error("failed to marshal owner info", zap.Error(err))
+				ownerInfoJSON = []byte("{}")
+			}
+		} else {
+			ownerInfoJSON = []byte("{}")
 		}
 
 		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
@@ -1515,6 +1560,7 @@ func (p *DropboxProvider) convertToSyncedItemSlice(
 			IsFolder:       entry.Tag == "folder",
 			ContentHash:    db.PGTextField(entry.ContentHash),
 			IsTrashed:      db.PGBool(entry.Tag == "deleted"),
+			OwnerInfo:      ownerInfoJSON,
 			CreatedTime:    db.PGTimestamptzField(time.Time{}),
 			ModifiedTime:   db.PGTimestamptzField(entry.ClientModified),
 			ThumbnailLink:  db.PGTextField(""),

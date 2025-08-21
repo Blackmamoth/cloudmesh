@@ -19,6 +19,12 @@ var (
 	pgOnce     sync.Once
 )
 
+type OwnerInfo struct {
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	PhotoLink   string `json:"photo_link"`
+}
+
 func GetPGClient() (*pgxpool.Config, *pgxpool.Pool) {
 	pgOnce.Do(func() {
 		poolconfig, err := connectPostgres()

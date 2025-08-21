@@ -525,7 +525,14 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(
 	syncedItems := []repository.AddSyncedItemsParams{}
 	providerFileIDs := []string{}
 
+	rootFolderID := ""
+
 	for _, item := range items {
+		if item.Name == "root" && item.ParentReference.Path == "" {
+			rootFolderID = item.ID
+			continue
+		}
+
 		ext := filepath.Ext(item.Name)
 
 		mimeType := mime.TypeByExtension(ext)
@@ -539,13 +546,31 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(
 
 		parentFolder := "/"
 
-		if item.ParentReference.ID != "" {
+		if item.ParentReference.ID != rootFolderID {
 			parentFolder = item.ParentReference.ID
 		}
 
 		path := strings.TrimPrefix(item.ParentReference.Path, "/drive/root:")
 		if path == "" {
 			path = "/"
+		}
+
+		var ownerInfoJSON []byte
+		if item.CreatedBy.User.ID != "" {
+			ownerInfo := map[string]string{
+				"display_name": item.CreatedBy.User.DisplayName,
+				"email":        item.CreatedBy.User.Email,
+				"photo_link":   "",
+			}
+
+			var err error
+			ownerInfoJSON, err = json.Marshal(ownerInfo)
+			if err != nil {
+				config.LOGGER.Error("failed to marshal owner info", zap.Error(err))
+				ownerInfoJSON = []byte("{}")
+			}
+		} else {
+			ownerInfoJSON = []byte("{}")
 		}
 
 		syncedItems = append(syncedItems, repository.AddSyncedItemsParams{
@@ -558,6 +583,7 @@ func (p *MicrosoftProvider) convertToSyncedItemSlice(
 			MimeType:       db.PGTextField(mimeType),
 			ParentFolder:   db.PGTextField(parentFolder),
 			IsFolder:       item.Folder != nil,
+			OwnerInfo:      ownerInfoJSON,
 			ContentHash:    db.PGTextField(contentHash),
 			CreatedTime:    db.PGTimestamptzField(item.CreatedDateTime),
 			ModifiedTime:   db.PGTimestamptzField(item.LastModifiedDateTime),

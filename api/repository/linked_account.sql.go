@@ -50,6 +50,20 @@ func (q *Queries) AddAccountDetails(ctx context.Context, arg AddAccountDetailsPa
 	return id, err
 }
 
+const deleteLinkedAccount = `-- name: DeleteLinkedAccount :exec
+DELETE FROM linked_account WHERE id = $1 AND user_id = $2
+`
+
+type DeleteLinkedAccountParams struct {
+	AccountID pgtype.UUID `json:"account_id"`
+	UserID    string      `json:"user_id"`
+}
+
+func (q *Queries) DeleteLinkedAccount(ctx context.Context, arg DeleteLinkedAccountParams) error {
+	_, err := q.db.Exec(ctx, deleteLinkedAccount, arg.AccountID, arg.UserID)
+	return err
+}
+
 const getAccountByProviderID = `-- name: GetAccountByProviderID :one
 SELECT id FROM linked_account WHERE user_id = $1 AND provider = $2 AND provider_user_id = $3 LIMIT 1
 `
@@ -65,6 +79,23 @@ func (q *Queries) GetAccountByProviderID(ctx context.Context, arg GetAccountByPr
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getAccountUserByID = `-- name: GetAccountUserByID :one
+SELECT name, email, avatar_url FROM linked_account WHERE id = $1
+`
+
+type GetAccountUserByIDRow struct {
+	Name      string      `json:"name"`
+	Email     string      `json:"email"`
+	AvatarUrl pgtype.Text `json:"avatar_url"`
+}
+
+func (q *Queries) GetAccountUserByID(ctx context.Context, accountID pgtype.UUID) (GetAccountUserByIDRow, error) {
+	row := q.db.QueryRow(ctx, getAccountUserByID, accountID)
+	var i GetAccountUserByIDRow
+	err := row.Scan(&i.Name, &i.Email, &i.AvatarUrl)
+	return i, err
 }
 
 const getAuthTokenExpiry = `-- name: GetAuthTokenExpiry :one
