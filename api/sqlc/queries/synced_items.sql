@@ -16,10 +16,7 @@ SELECT synced_items.id,
        synced_items.web_view_link,
        synced_items.web_content_link,
        synced_items.modified_time,
-       synced_items.owner_info,
-       linked_account.name AS account_name,
-       linked_account.avatar_url,
-       linked_account.provider
+       synced_items.owner_info
 FROM   synced_items
        JOIN linked_account
          ON linked_account.id = synced_items.account_id
