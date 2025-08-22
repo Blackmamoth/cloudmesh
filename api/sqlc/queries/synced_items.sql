@@ -22,6 +22,7 @@ FROM   synced_items
        JOIN linked_account
          ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = @user_id
+       AND is_trashed = @is_trashed
        AND (NULLIF(@parent_folder, '') IS NULL OR synced_items.parent_folder = @parent_folder)
        AND (NULLIF(@provider, '') IS NULL OR linked_account.provider = @provider::provider_enum)
        AND (
@@ -65,6 +66,7 @@ FROM   synced_items
        JOIN linked_account
        ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = @user_id
+       AND is_trashed = @is_trashed
        AND (NULLIF(@parent_folder, '') IS NULL OR synced_items.parent_folder = @parent_folder)
        AND (NULLIF(@provider, '') IS NULL OR linked_account.provider = @provider::provider_enum)
        AND (NULLIF(@search, '') IS NULL OR synced_items.name ILIKE '%' || @search::TEXT || '%')

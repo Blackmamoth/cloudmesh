@@ -36,6 +36,7 @@ type GetFilesValidation struct {
 	Provider      string `validate:"omitempty,oneof=google dropbox microsoft" json:"provider"`
 	ParentFolder  string `validate:"omitempty"                                json:"parent_folder"`
 	Search        string `validate:"omitempty"                                json:"search"`
+	IsTrashed     bool   `validate:"omitempty"                                json:"is_trashed"`
 	SortOn        string `validate:"omitempty"                                json:"sort_on"`
 	SortBy        string `validate:"omitempty"                                json:"sort_by"`
 	Limit         int32  `validate:"omitempty"                                json:"limit"`
@@ -205,6 +206,7 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 		UserID:          userID,
 		ParentFolder:    db.PGTextField(payload.ParentFolder),
 		Provider:        repository.ProviderEnum(payload.Provider),
+		IsTrashed:       db.PGBool(payload.IsTrashed),
 		SortOn:          payload.SortOn,
 		SortBy:          payload.SortBy,
 		Search:          payload.Search,
@@ -226,10 +228,12 @@ func (h *FilesHandler) getFiles(w http.ResponseWriter, r *http.Request) {
 	totalFileCount, err := queries.CountFilesWithFilters(
 		r.Context(),
 		repository.CountFilesWithFiltersParams{
-			UserID:       userID,
-			ParentFolder: db.PGTextField(payload.ParentFolder),
-			Provider:     repository.ProviderEnum(payload.Provider),
-			Search:       payload.Search,
+			UserID:          userID,
+			ParentFolder:    db.PGTextField(payload.ParentFolder),
+			Provider:        repository.ProviderEnum(payload.Provider),
+			Search:          payload.Search,
+			IsTrashed:       db.PGBool(payload.IsTrashed),
+			ProviderFileIds: providerFileIDs,
 		},
 	)
 	if err != nil {
