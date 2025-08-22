@@ -40,20 +40,22 @@ FROM   synced_items
        JOIN linked_account
        ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = $1
-       AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
-       AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
-       AND (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
+       AND is_trashed = $2
+       AND (NULLIF($3, '') IS NULL OR synced_items.parent_folder = $3)
+       AND (NULLIF($4, '') IS NULL OR linked_account.provider = $4::provider_enum)
+       AND (NULLIF($5, '') IS NULL OR synced_items.name ILIKE '%' || $5::TEXT || '%')
        AND (
          CASE
-           WHEN $5::TEXT[] IS NULL OR COALESCE(array_length($5::TEXT[], 1), 0) = 0
-           THEN (NULLIF($4, '') IS NULL OR synced_items.name ILIKE '%' || $4::TEXT || '%')
-           ELSE synced_items.provider_file_id = ANY($5::TEXT[])
+           WHEN $6::TEXT[] IS NULL OR COALESCE(array_length($6::TEXT[], 1), 0) = 0
+           THEN (NULLIF($5, '') IS NULL OR synced_items.name ILIKE '%' || $5::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY($6::TEXT[])
          END
 )
 `
 
 type CountFilesWithFiltersParams struct {
 	UserID          string      `json:"user_id"`
+	IsTrashed       pgtype.Bool `json:"is_trashed"`
 	ParentFolder    interface{} `json:"parent_folder"`
 	Provider        interface{} `json:"provider"`
 	Search          interface{} `json:"search"`
@@ -63,6 +65,7 @@ type CountFilesWithFiltersParams struct {
 func (q *Queries) CountFilesWithFilters(ctx context.Context, arg CountFilesWithFiltersParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countFilesWithFilters,
 		arg.UserID,
+		arg.IsTrashed,
 		arg.ParentFolder,
 		arg.Provider,
 		arg.Search,
@@ -192,46 +195,48 @@ FROM   synced_items
        JOIN linked_account
          ON linked_account.id = synced_items.account_id
 WHERE  linked_account.user_id = $1
-       AND (NULLIF($2, '') IS NULL OR synced_items.parent_folder = $2)
-       AND (NULLIF($3, '') IS NULL OR linked_account.provider = $3::provider_enum)
+       AND is_trashed = $2
+       AND (NULLIF($3, '') IS NULL OR synced_items.parent_folder = $3)
+       AND (NULLIF($4, '') IS NULL OR linked_account.provider = $4::provider_enum)
        AND (
          CASE
-           WHEN $4::TEXT[] IS NULL OR COALESCE(array_length($4::TEXT[], 1), 0) = 0
-           THEN (NULLIF($5, '') IS NULL OR synced_items.name ILIKE '%' || $5::TEXT || '%')
-           ELSE synced_items.provider_file_id = ANY($4::TEXT[])
+           WHEN $5::TEXT[] IS NULL OR COALESCE(array_length($5::TEXT[], 1), 0) = 0
+           THEN (NULLIF($6, '') IS NULL OR synced_items.name ILIKE '%' || $6::TEXT || '%')
+           ELSE synced_items.provider_file_id = ANY($5::TEXT[])
          END
        )
 ORDER BY
        CASE
-           WHEN $6 = 'file_name' AND $7 = 'asc' THEN synced_items.name
+           WHEN $7 = 'file_name' AND $8 = 'asc' THEN synced_items.name
            ELSE NULL -- Explicitly return NULL when not sorting by this
        END ASC,
        CASE
-           WHEN $6 = 'file_name' AND $7 = 'desc' THEN synced_items.name
+           WHEN $7 = 'file_name' AND $8 = 'desc' THEN synced_items.name
            ELSE NULL
        END DESC,
        CASE
-           WHEN $6 = 'size' AND $7 = 'asc' THEN synced_items.size
+           WHEN $7 = 'size' AND $8 = 'asc' THEN synced_items.size
            ELSE NULL
        END ASC,
        CASE
-           WHEN $6 = 'size' AND $7 = 'desc' THEN synced_items.size
+           WHEN $7 = 'size' AND $8 = 'desc' THEN synced_items.size
            ELSE NULL
        END DESC,
        CASE
-           WHEN $6 = 'modified_time' AND $7 = 'asc' THEN synced_items.modified_time::TIMESTAMPTZ
+           WHEN $7 = 'modified_time' AND $8 = 'asc' THEN synced_items.modified_time::TIMESTAMPTZ
            ELSE NULL
        END ASC,
        CASE
-           WHEN $6 = 'modified_time' AND $7 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
+           WHEN $7 = 'modified_time' AND $8 = 'desc' THEN synced_items.modified_time::TIMESTAMPTZ
            ELSE NULL
        END DESC,
        synced_items.modified_time DESC
-LIMIT $9 OFFSET $8
+LIMIT $10 OFFSET $9
 `
 
 type GetSyncedItemsParams struct {
 	UserID          string      `json:"user_id"`
+	IsTrashed       pgtype.Bool `json:"is_trashed"`
 	ParentFolder    interface{} `json:"parent_folder"`
 	Provider        interface{} `json:"provider"`
 	ProviderFileIds []string    `json:"provider_file_ids"`
@@ -260,6 +265,7 @@ type GetSyncedItemsRow struct {
 func (q *Queries) GetSyncedItems(ctx context.Context, arg GetSyncedItemsParams) ([]GetSyncedItemsRow, error) {
 	rows, err := q.db.Query(ctx, getSyncedItems,
 		arg.UserID,
+		arg.IsTrashed,
 		arg.ParentFolder,
 		arg.Provider,
 		arg.ProviderFileIds,
